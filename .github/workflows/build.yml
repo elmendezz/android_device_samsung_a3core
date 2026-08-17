@@ -1,9 +1,10 @@
-# Version: 1
+# Version: 2
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
 # - Se automatizó la creación de tags y releases dinámicas con el formato 'OrangeFox-<Version>-<Fecha,Hora,Minuto>'.
 # - Se configuró la extracción del historial de commits para usarlo automáticamente como descripción (changelog) del release.
+# - Se corrigió el fallo de 'ccache: command not found' instalando ccache mediante apt-get en el paso de preparación del entorno.
 
 name: Build OrangeFox Recovery
 
@@ -33,7 +34,7 @@ jobs:
       - name: Set up build environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 || true
+          sudo apt-get install -y ccache libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 || true
 
       - name: Set up repo
         run: |
@@ -68,7 +69,7 @@ jobs:
         id: meta
         run: |
           FOX_VER="R11.1"
-          DATE_STR=$(date -u +"%Y%m%m-%H%M")
+          DATE_STR=$(date -u +"%Y%m%d-%H%M")
           TAG_NAME="OrangeFox-${FOX_VER}-${DATE_STR}"
           
           if [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
