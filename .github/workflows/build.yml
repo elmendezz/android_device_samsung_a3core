@@ -141,6 +141,10 @@ jobs:
           python3 --version
 
           echo
+          echo "Git:"
+          git --version
+
+          echo
           echo "ccache:"
           ccache --version
 
@@ -259,7 +263,6 @@ jobs:
           echo
           echo "Repo status:"
           cd "${FOX_PATH}"
-
           repo status || true
 
       # ============================================================
@@ -313,7 +316,7 @@ jobs:
           done
 
       # ============================================================
-      # 8. DEVICE TREE ANALYSIS
+      # 8. ANALYZE DEVICE TREE
       # ============================================================
 
       - name: Analyze device tree
@@ -333,7 +336,11 @@ jobs:
 
           echo
           echo "===== BoardConfig.mk ====="
-          sed -n '1,260p' "${DEVICE_PATH}/BoardConfig.mk"
+          sed -n '1,300p' "${DEVICE_PATH}/BoardConfig.mk"
+
+          echo
+          echo "===== device.mk ====="
+          sed -n '1,300p' "${DEVICE_PATH}/device.mk"
 
           echo
           echo "===== Product makefiles ====="
@@ -399,6 +406,10 @@ jobs:
           ls -lh build/envsetup.sh
 
           echo
+          echo "Real envsetup target:"
+          readlink -f build/envsetup.sh
+
+          echo
           echo "Recovery repository:"
           git -C bootable/recovery status --short || true
 
@@ -407,18 +418,196 @@ jobs:
           git -C vendor/recovery status --short || true
 
       # ============================================================
-      # 10. LOAD ENVSETUP
+      # 10. SCAN ENVSSETUP.SH
       #
       # IMPORTANT:
-      # nounset (-u) MUST NOT be active here.
-      # OrangeFox envsetup accesses unset variables such as
-      # TOP and ZSH_VERSION.
+      # Aquí NO ejecutamos nada todavía.
+      # Primero subimos y analizamos el script.
+      # ============================================================
+
+      - name: Scan envsetup.sh
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          cd "${FOX_PATH}"
+
+          echo "============================================"
+          echo "ENVSETUP.SH ANALYSIS"
+          echo "============================================"
+
+          ENVSETUP="build/envsetup.sh"
+          REAL_ENVSETUP="$(readlink -f "${ENVSETUP}")"
+
+          echo
+          echo "Symlink:"
+          ls -lah "${ENVSETUP}"
+
+          echo
+          echo "Real file:"
+          echo "${REAL_ENVSETUP}"
+
+          echo
+          echo "File information:"
+          file "${REAL_ENVSETUP}"
+
+          echo
+          echo "Permissions:"
+          stat "${REAL_ENVSETUP}"
+
+          echo
+          echo "Line count:"
+          wc -l "${REAL_ENVSETUP}"
+
+          echo
+          echo "SHA256:"
+          sha256sum "${ENVSETUP}"
+          sha256sum "${REAL_ENVSETUP}"
+
+          echo
+          echo "First 100 lines:"
+          sed -n '1,100p' "${REAL_ENVSETUP}"
+
+          echo
+          echo "Relevant function definitions:"
+          grep -nE \
+            '^[[:space:]]*(function[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)' \
+            "${REAL_ENVSETUP}" \
+            | head -200 \
+            || true
+
+          echo
+          echo "References to TOP:"
+          grep -nE '\bTOP\b' "${REAL_ENVSETUP}" \
+            | head -100 \
+            || true
+
+          echo
+          echo "References to ZSH_VERSION:"
+          grep -nE 'ZSH_VERSION' "${REAL_ENVSETUP}" \
+            | head -100 \
+            || true
+
+          echo
+          echo "Commands that explicitly exit:"
+          grep -nE '(^|[;&[:space:]])exit[[:space:]]+[0-9]+' \
+            "${REAL_ENVSETUP}" \
+            | head -200 \
+            || true
+
+          echo
+          echo "set options:"
+          grep -nE '(^|[[:space:];])set[[:space:]]' \
+            "${REAL_ENVSETUP}" \
+            | head -200 \
+            || true
+
+          echo
+          echo "Sourcing operations:"
+          grep -nE '(^|[[:space:];])(source|\.)[[:space:]]' \
+            "${REAL_ENVSETUP}" \
+            | head -200 \
+            || true
+
+      # ============================================================
+      # 11. UPLOAD ENVSSETUP ARTIFACT
+      # ============================================================
+
+      - name: Upload envsetup source
+        uses: actions/upload-artifact@v4
+        with:
+          name: envsetup-source-${{ github.run_number }}
+          path: |
+            /home/runner/fox_12.1/build/envsetup.sh
+            /home/runner/fox_12.1/make/envsetup.sh
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      # ============================================================
+      # 12. CREATE ENVSSETUP DIAGNOSTIC PACKAGE
+      # ============================================================
+
+      - name: Create envsetup diagnostic package
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          cd "${FOX_PATH}"
+
+          mkdir -p "${RUNNER_TEMP}/envsetup-analysis"
+
+          ENVSETUP="build/envsetup.sh"
+          REAL_ENVSETUP="$(readlink -f "${ENVSETUP}")"
+
+          cp -L \
+            "${ENVSETUP}" \
+            "${RUNNER_TEMP}/envsetup-analysis/envsetup.sh"
+
+          cp \
+            "${REAL_ENVSETUP}" \
+            "${RUNNER_TEMP}/envsetup-analysis/envsetup-real.sh"
+
+          {
+            echo "ENVSETUP: ${ENVSETUP}"
+            echo "REAL_ENVSETUP: ${REAL_ENVSETUP}"
+            echo
+            echo "SHA256:"
+            sha256sum "${ENVSETUP}"
+            sha256sum "${REAL_ENVSETUP}"
+            echo
+            echo "Bash:"
+            bash --version
+            echo
+            echo "Shell:"
+            echo "${SHELL:-<unset>}"
+            echo
+            echo "PWD:"
+            pwd
+            echo
+            echo "TOP:"
+            printf '%s\n' "${TOP:-<unset>}"
+            echo
+            echo "ANDROID_BUILD_TOP:"
+            printf '%s\n' "${ANDROID_BUILD_TOP:-<unset>}"
+          } > "${RUNNER_TEMP}/envsetup-analysis/environment.txt"
+
+          grep -nE \
+            'TOP|ZSH_VERSION|set -|exit |return |source |^[.] ' \
+            "${REAL_ENVSETUP}" \
+            > "${RUNNER_TEMP}/envsetup-analysis/relevant-lines.txt" \
+            || true
+
+          tar -czf \
+            "${RUNNER_TEMP}/envsetup-analysis.tar.gz" \
+            -C "${RUNNER_TEMP}" \
+            envsetup-analysis
+
+      - name: Upload envsetup diagnostic package
+        uses: actions/upload-artifact@v4
+        with:
+          name: envsetup-diagnostic-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/envsetup-analysis.tar.gz
+            ${{ runner.temp }}/envsetup-analysis/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      # ============================================================
+      # 13. LOAD ENVSSETUP
+      #
+      # IMPORTANT:
+      # -e OFF
+      # -u OFF
+      #
+      # Esto permite capturar el error REAL.
       # ============================================================
 
       - name: Load Android build environment
         shell: bash
         run: |
-          set -eo pipefail
+          set -o pipefail
 
           cd "${FOX_PATH}"
 
@@ -435,24 +624,29 @@ jobs:
           echo "PWD=$(pwd)"
           echo "ANDROID_BUILD_TOP=${ANDROID_BUILD_TOP:-<unset>}"
           echo "TOP=${TOP:-<unset>}"
+          echo "ZSH_VERSION=${ZSH_VERSION:-<unset>}"
 
           echo
           echo "Loading OrangeFox envsetup..."
 
-          # --------------------------------------------------------
-          # DO NOT ENABLE set -u HERE.
+          # ========================================================
+          # ABSOLUTAMENTE IMPORTANTE:
           #
-          # OrangeFox/AOSP envsetup references variables that may
-          # not exist yet.
-          # --------------------------------------------------------
+          # envsetup.sh NO se ejecuta bajo:
+          #
+          #   set -e
+          #   set -u
+          #
+          # ========================================================
 
+          set +e
           set +u
 
           source build/envsetup.sh
 
           ENV_RC=$?
 
-          set -u
+          set +u
 
           echo
           echo "envsetup exit code: ${ENV_RC}"
@@ -465,10 +659,10 @@ jobs:
             echo "============================================"
 
             echo
-            echo "Running diagnostic trace..."
+            echo "Running bash trace..."
 
-            set +u
             set +e
+            set +u
 
             bash -x build/envsetup.sh \
               2>&1 \
@@ -476,18 +670,22 @@ jobs:
 
             DEBUG_RC=${PIPESTATUS[0]}
 
-            set -e
-            set -u
-
             echo
             echo "Diagnostic exit code: ${DEBUG_RC}"
 
             echo
-            echo "Last 200 lines:"
-            tail -200 "${RUNNER_TEMP}/envsetup-debug.log"
+            echo "Last 300 lines:"
+            tail -300 "${RUNNER_TEMP}/envsetup-debug.log"
 
             exit "${ENV_RC}"
           fi
+
+          # ========================================================
+          # Re-enable strict mode ONLY after envsetup has loaded.
+          # ========================================================
+
+          set -e
+          set -u
 
           echo
           echo "============================================"
@@ -500,7 +698,21 @@ jobs:
           echo "OUT_DIR=${OUT_DIR:-<unset>}"
 
       # ============================================================
-      # 11. DETECT COMMON_LUNCH_CHOICES
+      # 14. UPLOAD ENVSSETUP TRACE
+      # ============================================================
+
+      - name: Upload envsetup trace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: envsetup-trace-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/envsetup-debug.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # ============================================================
+      # 15. DETECT LUNCH TARGETS
       # ============================================================
 
       - name: Detect lunch targets
@@ -514,9 +726,17 @@ jobs:
           echo "DETECTING LUNCH TARGETS"
           echo "============================================"
 
+          set +e
           set +u
           source build/envsetup.sh
+          ENV_RC=$?
           set -u
+          set -e
+
+          if [ "${ENV_RC}" -ne 0 ]; then
+            echo "envsetup failed again with ${ENV_RC}"
+            exit "${ENV_RC}"
+          fi
 
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
@@ -525,32 +745,28 @@ jobs:
 
           echo
           echo "AndroidProducts.mk:"
-          cat "device/samsung/a3core/AndroidProducts.mk"
+          cat device/samsung/a3core/AndroidProducts.mk
 
           echo
-          echo "Searching COMMON_LUNCH_CHOICES..."
+          echo "COMMON_LUNCH_CHOICES:"
 
-          COMMON_CHOICES="$(
-            grep -R \
-              -h \
-              -E 'COMMON_LUNCH_CHOICES' \
-              device/samsung/a3core \
-              2>/dev/null \
-              || true
-          )"
-
-          echo "${COMMON_CHOICES}"
+          grep -R \
+            -h \
+            -E 'COMMON_LUNCH_CHOICES' \
+            device/samsung/a3core \
+            2>/dev/null \
+            || true
 
           echo
-          echo "Available lunch entries containing a3core:"
+          echo "Available a3core lunch targets:"
 
           lunch 2>&1 \
             | grep -i a3core \
-            | head -100 \
+            | head -200 \
             || true
 
       # ============================================================
-      # 12. SELECT LUNCH
+      # 16. SELECT LUNCH
       # ============================================================
 
       - name: Select lunch target
@@ -564,9 +780,16 @@ jobs:
           echo "SELECTING LUNCH TARGET"
           echo "============================================"
 
+          set +e
           set +u
           source build/envsetup.sh
+          ENV_RC=$?
           set -u
+          set -e
+
+          if [ "${ENV_RC}" -ne 0 ]; then
+            exit "${ENV_RC}"
+          fi
 
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
@@ -575,13 +798,10 @@ jobs:
 
           SUCCESS=0
 
-          # --------------------------------------------------------
-          # Primero obtenemos targets desde AndroidProducts.mk.
-          # --------------------------------------------------------
-
           TARGETS=()
 
           while IFS= read -r target; do
+
             [ -z "$target" ] && continue
 
             case "$target" in
@@ -603,10 +823,6 @@ jobs:
           echo
           echo "Detected targets:"
           printf '  %s\n' "${TARGETS[@]}" || true
-
-          # --------------------------------------------------------
-          # Intentar targets declarados.
-          # --------------------------------------------------------
 
           for target in "${TARGETS[@]}"; do
 
@@ -633,10 +849,6 @@ jobs:
             fi
 
           done
-
-          # --------------------------------------------------------
-          # Fallbacks solamente como último recurso.
-          # --------------------------------------------------------
 
           if [ "${SUCCESS}" -eq 0 ]; then
 
@@ -697,7 +909,7 @@ jobs:
           fi
 
       # ============================================================
-      # 13. BUILD
+      # 17. BUILD
       # ============================================================
 
       - name: Build recovery
@@ -711,10 +923,20 @@ jobs:
           echo "ORANGEFOX BUILD"
           echo "============================================"
 
-          # Nuevamente: NO nounset mientras se carga envsetup.
+          set +e
           set +u
+
           source build/envsetup.sh
-          set -u
+
+          ENV_RC=$?
+
+          set +u
+          set -e
+
+          if [ "${ENV_RC}" -ne 0 ]; then
+            echo "envsetup failed: ${ENV_RC}"
+            exit "${ENV_RC}"
+          fi
 
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
@@ -730,7 +952,7 @@ jobs:
           ccache -s
 
           echo
-          echo "Disk before build:"
+          echo "Disk:"
           df -h
 
           echo
@@ -764,8 +986,6 @@ jobs:
             echo "BUILD FAILED"
             echo "============================================"
 
-            echo
-            echo "Last 300 lines:"
             tail -300 "${RUNNER_TEMP}/orangefox-build.log"
 
             exit "${BUILD_RC}"
@@ -777,7 +997,7 @@ jobs:
           echo "============================================"
 
       # ============================================================
-      # 14. FIND OUTPUT
+      # 18. FIND OUTPUT
       # ============================================================
 
       - name: Locate recovery output
@@ -794,23 +1014,22 @@ jobs:
           if [ -d "${OUT_DIR}" ]; then
 
             echo
-            echo "Expected output directory:"
+            echo "Output directory:"
             echo "${OUT_DIR}"
 
             echo
-            echo "Files:"
             ls -lah "${OUT_DIR}"
 
           else
 
             echo
-            echo "WARNING: Expected directory not found:"
+            echo "WARNING: Expected output directory missing:"
             echo "${OUT_DIR}"
 
           fi
 
           echo
-          echo "Searching recovery images..."
+          echo "Searching recovery artifacts..."
 
           find "${FOX_PATH}/out" \
             -type f \
@@ -824,7 +1043,7 @@ jobs:
             | sort
 
       # ============================================================
-      # 15. PACKAGE
+      # 19. PACKAGE
       # ============================================================
 
       - name: Package recovery
@@ -846,23 +1065,11 @@ jobs:
 
           cd "${OUT_DIR}"
 
-          echo
-          echo "Output files:"
-          ls -lah
-
-          # --------------------------------------------------------
-          # Si OrangeFox ya produjo ZIP, conservarlo.
-          # --------------------------------------------------------
-
           if compgen -G "*.zip" > /dev/null; then
 
             echo
-            echo "Existing ZIP files:"
+            echo "ZIP already exists:"
             ls -lh *.zip
-
-          # --------------------------------------------------------
-          # Si solamente produjo recovery.img, crear ZIP.
-          # --------------------------------------------------------
 
           elif [ -f "recovery.img" ]; then
 
@@ -876,10 +1083,8 @@ jobs:
           else
 
             echo
-            echo "ERROR: Neither recovery.img nor ZIP was generated."
+            echo "ERROR: No recovery.img or ZIP."
 
-            echo
-            echo "Complete output:"
             find . -maxdepth 1 -type f -print
 
             exit 1
@@ -890,7 +1095,7 @@ jobs:
           ls -lh *.zip
 
       # ============================================================
-      # 16. VALIDATE ARTIFACTS
+      # 20. VALIDATE ARTIFACTS
       # ============================================================
 
       - name: Validate artifacts
@@ -912,12 +1117,12 @@ jobs:
               | wc -l
           )
 
-          echo "ZIP count: ${ZIP_COUNT}"
-
           if [ "${ZIP_COUNT}" -eq 0 ]; then
             echo "ERROR: No ZIP found."
             exit 1
           fi
+
+          echo "ZIP count: ${ZIP_COUNT}"
 
           for zipfile in "${OUT_DIR}"/*.zip; do
 
@@ -939,10 +1144,12 @@ jobs:
 
             file "${OUT_DIR}/recovery.img" || true
 
+            sha256sum "${OUT_DIR}/recovery.img"
+
           fi
 
       # ============================================================
-      # 17. BUILD LOGS
+      # 21. BUILD LOG
       # ============================================================
 
       - name: Upload build logs
@@ -954,10 +1161,10 @@ jobs:
             ${{ runner.temp }}/envsetup-debug.log
             ${{ runner.temp }}/orangefox-build.log
           if-no-files-found: ignore
-          retention-days: 14
+          retention-days: 30
 
       # ============================================================
-      # 18. RECOVERY ARTIFACT
+      # 22. RECOVERY ARTIFACT
       # ============================================================
 
       - name: Upload recovery artifact
@@ -972,7 +1179,7 @@ jobs:
           retention-days: 30
 
       # ============================================================
-      # 19. METADATA
+      # 23. METADATA
       # ============================================================
 
       - name: Generate release metadata
@@ -987,17 +1194,6 @@ jobs:
           TAG_NAME="OrangeFox-${DEVICE}-${FOX_VERSION}-${DATE_STR}"
 
           echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
-
-          echo "============================================"
-          echo "RELEASE METADATA"
-          echo "============================================"
-
-          echo
-          echo "Tag:"
-          echo "${TAG_NAME}"
-
-          echo
-          echo "Changelog:"
 
           CHANGELOG="$(
             git log \
@@ -1016,7 +1212,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       # ============================================================
-      # 20. RELEASE
+      # 24. GITHUB RELEASE
       # ============================================================
 
       - name: Create GitHub Release
@@ -1043,7 +1239,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ============================================================
-      # 21. FINAL CCACHE
+      # 25. FINAL CCACHE
       # ============================================================
 
       - name: Final ccache statistics
