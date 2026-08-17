@@ -1,4 +1,4 @@
-# Version: 5
+# Version: 6
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
@@ -9,7 +9,7 @@
 # - Se reemplazaron los pasos de 'repo init' y 'repo sync' por el script oficial de OrangeFox (orangefox_sync.sh) clonando el repo 'sync.git' e indicando la rama 12.1 con su ruta absoluta.
 # - Se configuró la variable global ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION para silenciar advertencias/bloqueos de Node 20.
 # - Se añadió la bandera 'if-no-files-found: error' en upload-artifact para evitar que falle en silencio si no encuentra los .zip.
-# - Se corrigió el flujo de clonado del árbol de dispositivo del Samsung A3 Core dentro de local_manifests para generar los archivos de salida reales en 'out/target/product/a3core/'.
+# - Se corrigió el fallo 'No such file or directory' creando la ruta 'device/samsung/a3core' mediante 'mkdir -p' antes de clonar/copiar el device tree.
 
 name: Build OrangeFox Recovery
 
@@ -67,8 +67,8 @@ jobs:
 
       - name: Setup Device Tree
         run: |
-          mkdir -p $HOME/fox_12.1/.repo/local_manifests
-          cp -r $GITHUB_WORKSPACE $HOME/fox_12.1/device/samsung/a3core || true
+          mkdir -p $HOME/fox_12.1/device/samsung/a3core
+          cp -r ./* $HOME/fox_12.1/device/samsung/a3core/ || git clone https://github.com/elmendezz/android_device_samsung_a3core.git $HOME/fox_12.1/device/samsung/a3core
 
       - name: Build recovery
         run: |
