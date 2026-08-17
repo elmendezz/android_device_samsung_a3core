@@ -1,20 +1,26 @@
-name: Build All Recoveries
+# Version: 1
+# Changelog:
+# - Se eliminó la estrategia de matriz (twrp, pbrp, shrp) para enfocar el build únicamente en OrangeFox.
+# - Se cambió el nombre del job a "Build OrangeFox".
+# - Se simplificó 'local_manifests' para clonar únicamente la fuente del vendor de OrangeFox.
+# - Se actualizó la variable del comando lunch a 'fox_a3core-userdebug'.
+# - Se ajustó el nombre del artefacto final a 'OrangeFox-a3core.img' (o .tar según tu árbol).
+# - Se adaptaron los pasos de upload y release para un solo artefacto sin variables de matriz.
+
+name: Build OrangeFox Recovery
 
 on:
-  workflow_dispatch: # Permite iniciar la compilación manualmente desde la pestaña Actions en GitHub
+  workflow_dispatch:
   push:
     branches:
-      - main # O la rama principal que uses
+      - main
     tags:
-      - 'v*' # Se activa al empujar un tag que empiece con 'v'
+      - 'v*'
 
 jobs:
   build:
-    name: Build ${{ matrix.recovery }}
+    name: Build OrangeFox
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        recovery: [twrp, pbrp, shrp, ofox] # Matriz con el nombre de cada recovery
 
     steps:
     - name: Checkout
@@ -24,9 +30,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ccache-${{ runner.os }}-${{ matrix.recovery }}-${{ github.sha }}
+        key: ccache-${{ runner.os }}-ofox-${{ github.sha }}
         restore-keys: |
-          ccache-${{ runner.os }}-${{ matrix.recovery }}-
+          ccache-${{ runner.os }}-ofox-
 
     - name: Set up build environment
       run: |
@@ -45,30 +51,24 @@ jobs:
         export CCACHE_DIR=~/.ccache
         export CCACHE_EXEC=/usr/bin/ccache
         export USE_CCACHE=1
-        ccache -M 50G # Establece el tamaño máximo de la caché a 50GB
-        ccache -z # Resetea las estadísticas
+        ccache -M 50G
+        ccache -z
 
     - name: Initialize repo
       run: |
         export PATH=~/bin:$PATH
         mkdir -p workspace
         cd workspace
-        # Usamos un manifiesto común para compilaciones de recovery. Ajusta la URL y la rama si es necesario.
         repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b twrp-12.1
 
     - name: Create local manifest
       run: |
         mkdir -p workspace/.repo/local_manifests
-        # Este manifiesto local clonará tu árbol de dispositivo y las dependencias de cada recovery.
-        # Asegúrate de que las rutas y ramas de los repositorios de vendor sean correctas.
         cat <<'EOF' > workspace/.repo/local_manifests/roomservice.xml
         <?xml version="1.0" encoding="UTF-8"?>
         <manifest>
           <remote name="gitlab" fetch="https://gitlab.com/" />
           <project name="Aflahal-elmendezz/android_device_samsung_a3core" path="device/samsung/a3core" remote="github" revision="main" />
-          <project name="TeamWin/android_vendor_twrp" path="vendor/twrp" remote="github" revision="12.1" />
-          <project name="PitchBlackRecoveryProject/android_vendor_pb" path="vendor/pb" remote="github" revision="12.1" />
-          <project name="SHRP-Devices/android_vendor_shrp" path="vendor/shrp" remote="github" revision="shrp-12.1" />
           <project name="OrangeFox/vendor/fox" path="vendor/fox" remote="gitlab" revision="fox_12.1" />
         </manifest>
         EOF
@@ -86,28 +86,28 @@ jobs:
         export CCACHE_DIR=~/.ccache
         export CCACHE_EXEC=/usr/bin/ccache
         export USE_CCACHE=1
-        lunch ${{ matrix.recovery }}_a3core-userdebug
+        lunch fox_a3core-userdebug
         mka -j$(nproc --all) recoveryimage
 
     - name: Rename Artifact
       run: |
-        mv workspace/out/target/product/a3core/recovery.tar workspace/out/target/product/a3core/${{ matrix.recovery }}_a3core.tar
+        mv workspace/out/target/product/a3core/recovery.tar workspace/out/target/product/a3core/OrangeFox_a3core.tar
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.recovery }}-a3core
-        path: workspace/out/target/product/a3core/${{ matrix.recovery }}_a3core.tar
+        name: OrangeFox-a3core
+        path: workspace/out/target/product/a3core/OrangeFox_a3core.tar
 
   release:
     name: Create GitHub Release
-    needs: build # Se ejecuta después de que el trabajo 'build' termine para todas las matrices
+    needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') # Solo se ejecuta si el evento fue un push a un tag
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*/*" # Sube todos los archivos de todos los artefactos descargados
+          files: "*/*"
