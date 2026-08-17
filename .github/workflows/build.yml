@@ -1,173 +1,1028 @@
-# Version: 9
-# ChangeLog:
-# - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
-# - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
-# - Se automatizó la creación de tags y releases dinámicas con el formato 'OrangeFox-<Version>-<Fecha,Hora,Minuto>'.
-# - Se configuró la extracción del historial de commits para usarlo automáticamente como descripción (changelog) del release.
-# - Se corrigió el fallo de 'ccache: command not found' instalando ccache mediante apt-get en el paso de preparación del entorno.
-# - Se corrigió el error 'UpdateManifestError' al hacer repo init actualizando la URL del manifest al nuevo repositorio oficial 'https://gitlab.com/OrangeFox/sync.git'.
-# - Se reemplazaron los pasos de 'repo init' y 'repo sync' por el script oficial de OrangeFox (orangefox_sync.sh) clonando el repo 'sync.git' e indicando la rama 12.1 con su ruta absoluta.
-# - Se configuró la variable global ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION para silenciar advertencias/bloqueos de Node 20.
-# - Se añadió la bandera 'if-no-files-found: error' en upload-artifact para evitar que falle en silencio si no encuentra los .zip.
-# - Se corrigió el fallo 'No such file or directory' creando la ruta 'device/samsung/a3core' mediante 'mkdir -p' antes de clonar/copiar el device tree.
-# - Se corrigió la lógica del paso 'Build recovery' agregando manejo de errores estricto (set -e) y empaquetado automático a .zip en caso de que la compilación solo genere una imagen .img directa.
-# - Se añadieron logs detallados y diagnósticos en cada paso crítico para evitar fallos silenciosos y mostrar la ruta exacta/estado de compilación.
-# - Se cambió el shell del paso 'Build recovery' a 'bash' explícito y se añadió la verificación de existencia de 'build/envsetup.sh' antes del 'source' para evitar el crash con exit code 1.
-
 name: Build OrangeFox Recovery
 
 on:
   push:
     branches:
-      - '*'
+      - '**'
   workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
 
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
+  FOX_BRANCH: '12.1'
+  FOX_PATH: /home/runner/fox_12.1
+  DEVICE: a3core
+  VENDOR: samsung
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build OrangeFox a3core
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
     steps:
-      - name: Checkout
+
+      # ============================================================
+      # 1. CHECKOUT DEL DEVICE TREE
+      # ============================================================
+
+      - name: Checkout device tree
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # ============================================================
+      # 2. INFORMACIÓN DEL RUNNER
+      # ============================================================
+
+      - name: Runner diagnostics
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "============================================"
+          echo "RUNNER INFORMATION"
+          echo "============================================"
+
+          echo "OS:"
+          cat /etc/os-release
+
+          echo
+          echo "Kernel:"
+          uname -a
+
+          echo
+          echo "CPU:"
+          nproc
+          lscpu | grep -E 'Model name|CPU\(s\)' || true
+
+          echo
+          echo "RAM:"
+          free -h
+
+          echo
+          echo "DISK:"
+          df -h
+
+          echo
+          echo "WORKSPACE:"
+          pwd
+
+          echo
+          echo "DEVICE TREE:"
+          find . -maxdepth 2 -type f | sort
+
+      # ============================================================
+      # 3. DEPENDENCIAS
+      # ============================================================
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "============================================"
+          echo "INSTALLING BUILD DEPENDENCIES"
+          echo "============================================"
+
+          sudo apt-get update
+
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            adb \
+            bc \
+            bison \
+            build-essential \
+            ca-certificates \
+            ccache \
+            clang \
+            curl \
+            flex \
+            g++-multilib \
+            gcc-multilib \
+            git \
+            gnupg \
+            gperf \
+            imagemagick \
+            lib32ncurses-dev \
+            lib32z1-dev \
+            libelf-dev \
+            liblz4-tool \
+            libncurses-dev \
+            libncurses6 \
+            libssl-dev \
+            libxml2 \
+            lz4 \
+            m4 \
+            make \
+            ninja-build \
+            openjdk-11-jdk \
+            openssh-client \
+            pngcrush \
+            python3 \
+            python3-pip \
+            rsync \
+            schedtool \
+            squashfs-tools \
+            unzip \
+            xsltproc \
+            zip \
+            zlib1g-dev
+
+          echo
+          echo "Java:"
+          java -version
+
+          echo
+          echo "Python:"
+          python3 --version
+
+          echo
+          echo "Git:"
+          git --version
+
+          echo
+          echo "ccache:"
+          ccache --version
+
+      # ============================================================
+      # 4. CONFIGURAR CCACHE
+      # ============================================================
+
+      - name: Configure ccache
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "============================================"
+          echo "CCACHE"
+          echo "============================================"
+
+          mkdir -p "$HOME/.ccache"
+
+          ccache --set-config=max_size=50G
+          ccache --set-config=compression=true
+
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "USE_CCACHE=1" >> "$GITHUB_ENV"
+          echo "CCACHE_EXEC=$(command -v ccache)" >> "$GITHUB_ENV"
+
+          ccache -z
+          ccache -s
 
       - name: Cache ccache
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ccache-${{ runner.os }}-${{ github.sha }}
+          key: orangefox-ccache-${{ runner.os }}-${{ hashFiles('**/BoardConfig.mk', '**/AndroidProducts.mk') }}
           restore-keys: |
-            ccache-${{ runner.os }}-
+            orangefox-ccache-${{ runner.os }}-
 
-      - name: Set up build environment
-        run: |
-          echo "===> Instalando paquetes requeridos..."
-          sudo apt-get update
-          sudo apt-get install -y ccache libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 zip unzip || true
+      # ============================================================
+      # 5. INSTALAR REPO
+      # ============================================================
 
-      - name: Set up repo
+      - name: Install repo tool
+        shell: bash
         run: |
-          echo "===> Configurando repo tool..."
-          mkdir -p ~/bin
-          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-          chmod a+x ~/bin/repo
-          echo "$HOME/bin" >> $GITHUB_PATH
+          set -euxo pipefail
 
-      - name: Configure ccache
-        run: |
-          echo "===> Configurando ccache..."
-          export USE_CCACHE=1
-          export CCACHE_EXEC=/usr/bin/ccache
-          ccache -M 50G
-          ccache -s
+          echo "============================================"
+          echo "INSTALLING REPO"
+          echo "============================================"
 
-      - name: Sync OrangeFox Sources
+          mkdir -p "$HOME/bin"
+
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+
+          chmod +x "$HOME/bin/repo"
+
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+          "$HOME/bin/repo" --version
+
+      # ============================================================
+      # 6. SINCRONIZAR ORANGEFOX
+      # ============================================================
+
+      - name: Sync OrangeFox sources
+        shell: bash
         run: |
-          echo "===> Clonando e iniciando sync de OrangeFox..."
-          mkdir -p ~/OrangeFox_sync
-          cd ~/OrangeFox_sync
-          git clone https://gitlab.com/OrangeFox/sync.git
+          set -euxo pipefail
+
+          echo "============================================"
+          echo "ORANGEFOX SOURCE SYNC"
+          echo "============================================"
+
+          rm -rf "$HOME/OrangeFox_sync"
+
+          mkdir -p "$HOME/OrangeFox_sync"
+
+          cd "$HOME/OrangeFox_sync"
+
+          git clone \
+            --depth=1 \
+            https://gitlab.com/OrangeFox/sync.git
+
           cd sync
-          ./orangefox_sync.sh --branch 12.1 --path $HOME/fox_12.1
-          echo "===> Contenido del directorio fox_12.1 tras sync:"
-          ls -la $HOME/fox_12.1 || true
 
-      - name: Setup Device Tree
+          chmod +x orangefox_sync.sh
+
+          echo "Sync script:"
+          ./orangefox_sync.sh --help || true
+
+          echo
+          echo "Starting OrangeFox ${FOX_BRANCH} sync..."
+
+          ./orangefox_sync.sh \
+            --branch "${FOX_BRANCH}" \
+            --path "${FOX_PATH}"
+
+          echo
+          echo "============================================"
+          echo "SYNC FINISHED"
+          echo "============================================"
+
+          test -d "${FOX_PATH}"
+          test -d "${FOX_PATH}/build"
+
+          echo
+          echo "Fox directory:"
+          ls -lah "${FOX_PATH}"
+
+          echo
+          echo "build/envsetup.sh:"
+          ls -lh "${FOX_PATH}/build/envsetup.sh"
+
+      # ============================================================
+      # 7. COPIAR DEVICE TREE DE FORMA LIMPIA
+      # ============================================================
+
+      - name: Install a3core device tree
+        shell: bash
         run: |
-          echo "===> Verificando estructura antes de copiar el Device Tree..."
-          if [ ! -d "$HOME/fox_12.1" ]; then
-            echo "ERROR CRITICO: La carpeta $HOME/fox_12.1 no existe!"
+          set -euxo pipefail
+
+          echo "============================================"
+          echo "INSTALLING DEVICE TREE"
+          echo "============================================"
+
+          DEVICE_PATH="${FOX_PATH}/device/${VENDOR}/${DEVICE}"
+
+          mkdir -p "${DEVICE_PATH}"
+
+          echo "Destination:"
+          echo "${DEVICE_PATH}"
+
+          # Copiamos solamente el contenido del device tree.
+          # Excluimos .git y archivos propios de GitHub Actions.
+
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            ./ \
+            "${DEVICE_PATH}/"
+
+          echo
+          echo "Installed device tree:"
+          find "${DEVICE_PATH}" -maxdepth 2 -type f | sort
+
+          echo
+          echo "Checking required files..."
+
+          REQUIRED_FILES=(
+            "AndroidProducts.mk"
+            "Android.mk"
+            "BoardConfig.mk"
+            "device.mk"
+          )
+
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ ! -f "${DEVICE_PATH}/${file}" ]; then
+              echo "ERROR: Missing ${file}"
+              exit 1
+            fi
+          done
+
+          echo "All mandatory files exist."
+
+      # ============================================================
+      # 8. INSPECCIONAR ANDROIDPRODUCTS.MK
+      # ============================================================
+
+      - name: Detect build targets
+        id: targets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEVICE_PATH="${FOX_PATH}/device/${VENDOR}/${DEVICE}"
+
+          echo "============================================"
+          echo "DEVICE TREE ANALYSIS"
+          echo "============================================"
+
+          echo
+          echo "AndroidProducts.mk:"
+          cat "${DEVICE_PATH}/AndroidProducts.mk"
+
+          echo
+          echo "BoardConfig.mk:"
+          sed -n '1,240p' "${DEVICE_PATH}/BoardConfig.mk"
+
+          echo
+          echo "Device makefiles:"
+          find "${DEVICE_PATH}" \
+            -maxdepth 1 \
+            -type f \
+            -name '*a3core*.mk' \
+            -print \
+            | sort
+
+          echo
+          echo "============================================"
+          echo "PRODUCT DEFINITIONS"
+          echo "============================================"
+
+          PRODUCTS="$(
+            grep -rhoE \
+              '([A-Za-z0-9_]+_a3core|[A-Za-z0-9_]+a3core)' \
+              "${DEVICE_PATH}/AndroidProducts.mk" \
+              "${DEVICE_PATH}"/*.mk \
+              2>/dev/null \
+              | sort -u \
+              | tr '\n' ' ' \
+              || true
+          )"
+
+          echo "Detected product names:"
+          echo "${PRODUCTS}"
+
+          if [ -z "${PRODUCTS}" ]; then
+            echo
+            echo "WARNING: No product name could be extracted automatically."
+          fi
+
+          echo "PRODUCT_CANDIDATES=${PRODUCTS}" >> "$GITHUB_OUTPUT"
+
+      # ============================================================
+      # 9. VERIFICAR DEPENDENCIAS DEL DEVICE TREE
+      # ============================================================
+
+      - name: Resolve device dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          DEVICE_PATH="${FOX_PATH}/device/${VENDOR}/${DEVICE}"
+
+          cd "${DEVICE_PATH}"
+
+          echo "============================================"
+          echo "DEVICE DEPENDENCIES"
+          echo "============================================"
+
+          if [ -f "twrp.dependencies" ]; then
+            echo "Found twrp.dependencies:"
+            cat twrp.dependencies
+
+            cd "${FOX_PATH}"
+
+            echo
+            echo "Running repo sync for dependency manifests..."
+
+            repo sync \
+              --force-sync \
+              --no-clone-bundle \
+              --no-tags \
+              -j"$(nproc)" \
+              || {
+                echo
+                echo "WARNING: repo sync reported dependency errors."
+                echo "Continuing so the build diagnostics can identify them."
+              }
+          else
+            echo "No twrp.dependencies found."
+          fi
+
+      # ============================================================
+      # 10. VERIFICAR ESTRUCTURA COMPLETA
+      # ============================================================
+
+      - name: Validate OrangeFox tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "${FOX_PATH}"
+
+          echo "============================================"
+          echo "SOURCE TREE VALIDATION"
+          echo "============================================"
+
+          REQUIRED_DIRS=(
+            "build"
+            "bootable/recovery"
+            "vendor/recovery"
+            "system/core"
+            "device/samsung/a3core"
+          )
+
+          for dir in "${REQUIRED_DIRS[@]}"; do
+            if [ ! -d "${dir}" ]; then
+              echo "ERROR: Missing directory: ${dir}"
+              exit 1
+            fi
+
+            echo "OK: ${dir}"
+          done
+
+          echo
+          echo "envsetup:"
+          test -f build/envsetup.sh
+          ls -lh build/envsetup.sh
+
+          echo
+          echo "OrangeFox recovery:"
+          git -C bootable/recovery status --short || true
+
+          echo
+          echo "Vendor recovery:"
+          git -C vendor/recovery status --short || true
+
+      # ============================================================
+      # 11. CARGAR ENVSETUP CON DIAGNÓSTICO
+      # ============================================================
+
+      - name: Load Android build environment
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          cd "${FOX_PATH}"
+
+          echo "============================================"
+          echo "LOADING ENVSETUP"
+          echo "============================================"
+
+          echo "Shell:"
+          bash --version | head -1
+
+          echo
+          echo "Before source:"
+          echo "PWD=$(pwd)"
+          echo "ANDROID_BUILD_TOP=${ANDROID_BUILD_TOP:-<unset>}"
+
+          echo
+          echo "Running envsetup.sh..."
+
+          set +e
+
+          source build/envsetup.sh
+
+          RC=$?
+
+          set -e
+
+          echo
+          echo "envsetup.sh exit code: ${RC}"
+
+          if [ "${RC}" -ne 0 ]; then
+            echo
+            echo "============================================"
+            echo "ENVSETUP FAILED"
+            echo "============================================"
+
+            echo
+            echo "Running envsetup.sh under bash -x..."
+
+            set +e
+            bash -x build/envsetup.sh \
+              2>&1 \
+              | tee "${RUNNER_TEMP}/envsetup-debug.log"
+
+            DEBUG_RC=${PIPESTATUS[0]}
+
+            echo
+            echo "Debug exit code: ${DEBUG_RC}"
+
+            echo
+            echo "Last 150 lines:"
+            tail -150 "${RUNNER_TEMP}/envsetup-debug.log"
+
+            exit "${RC}"
+          fi
+
+          echo
+          echo "envsetup.sh loaded successfully."
+
+          echo
+          echo "ANDROID_BUILD_TOP=${ANDROID_BUILD_TOP:-<unset>}"
+          echo "OUT_DIR=${OUT_DIR:-<unset>}"
+
+          echo
+          echo "Available lunch products:"
+
+          lunch 2>&1 | head -200 || true
+
+      # ============================================================
+      # 12. SELECCIONAR LUNCH AUTOMÁTICAMENTE
+      # ============================================================
+
+      - name: Select lunch target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "${FOX_PATH}"
+
+          echo "============================================"
+          echo "SELECTING LUNCH TARGET"
+          echo "============================================"
+
+          source build/envsetup.sh
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export USE_CCACHE=1
+          export CCACHE_EXEC="$(command -v ccache)"
+
+          echo
+          echo "All available lunch targets containing a3core:"
+
+          lunch 2>&1 \
+            | grep -i "a3core" \
+            | head -100 \
+            || true
+
+          echo
+          echo "Inspecting AndroidProducts.mk..."
+
+          cat "device/samsung/a3core/AndroidProducts.mk"
+
+          echo
+          echo "Searching for lunch-compatible product definitions..."
+
+          CANDIDATES=()
+
+          while IFS= read -r product; do
+            [ -z "$product" ] && continue
+
+            case "$product" in
+              *a3core*)
+                CANDIDATES+=("$product")
+                ;;
+            esac
+          done < <(
+            grep -rhoE \
+              'PRODUCT_MAKEFILES[[:space:]]*:?=[^#]*|COMMON_LUNCH_CHOICES[[:space:]]*:?=[^#]*' \
+              device/samsung/a3core \
+              2>/dev/null \
+              | grep -oE '[A-Za-z0-9_.-]*a3core[A-Za-z0-9_.-]*' \
+              | sort -u
+          )
+
+          echo
+          echo "Detected candidates:"
+          printf '%s\n' "${CANDIDATES[@]}" || true
+
+          SUCCESS=0
+
+          # --------------------------------------------------------
+          # Intentamos primero los targets declarados por
+          # COMMON_LUNCH_CHOICES.
+          # --------------------------------------------------------
+
+          while IFS= read -r target; do
+            [ -z "$target" ] && continue
+
+            echo
+            echo "Trying lunch target:"
+            echo "  ${target}"
+
+            if lunch "${target}"; then
+              echo
+              echo "============================================"
+              echo "SUCCESSFUL LUNCH"
+              echo "============================================"
+
+              echo "TARGET_PRODUCT=${TARGET_PRODUCT}"
+              echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}"
+              echo "TARGET_BUILD_TYPE=${TARGET_BUILD_TYPE:-unknown}"
+
+              {
+                echo "TARGET_PRODUCT=${TARGET_PRODUCT}"
+                echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}"
+              } >> "$GITHUB_ENV"
+
+              SUCCESS=1
+              break
+            fi
+          done < <(
+            grep -rhoE \
+              'COMMON_LUNCH_CHOICES[[:space:]]*:?=[^#]*' \
+              device/samsung/a3core \
+              2>/dev/null \
+              | grep -oE '[A-Za-z0-9_.-]*a3core[A-Za-z0-9_.-]*-[A-Za-z0-9_.-]+' \
+              | sort -u
+          )
+
+          # --------------------------------------------------------
+          # Fallbacks.
+          # --------------------------------------------------------
+
+          if [ "$SUCCESS" -eq 0 ]; then
+
+            FALLBACKS=(
+              "twrp_a3core-eng"
+              "omni_a3core-eng"
+              "fox_a3core-eng"
+              "ofox_a3core-eng"
+            )
+
+            for target in "${FALLBACKS[@]}"; do
+
+              echo
+              echo "Trying fallback:"
+              echo "  ${target}"
+
+              if lunch "${target}"; then
+
+                echo
+                echo "SUCCESS:"
+                echo "${target}"
+
+                echo "TARGET_PRODUCT=${TARGET_PRODUCT}" >> "$GITHUB_ENV"
+                echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}" >> "$GITHUB_ENV"
+
+                SUCCESS=1
+                break
+              fi
+
+            done
+          fi
+
+          if [ "$SUCCESS" -ne 1 ]; then
+            echo
+            echo "============================================"
+            echo "NO VALID LUNCH TARGET"
+            echo "============================================"
+
+            echo
+            echo "AndroidProducts.mk:"
+            cat device/samsung/a3core/AndroidProducts.mk
+
+            echo
+            echo "All products mentioning a3core:"
+            lunch 2>&1 \
+              | grep -i a3core \
+              | head -200 \
+              || true
+
             exit 1
           fi
-          mkdir -p $HOME/fox_12.1/device/samsung/a3core
-          echo "===> Copiando device tree local..."
-          cp -r ./* $HOME/fox_12.1/device/samsung/a3core/ || true
-          echo "===> Verificando archivos copiados:"
-          ls -la $HOME/fox_12.1/device/samsung/a3core/
+
+      # ============================================================
+      # 13. COMPILACIÓN
+      # ============================================================
 
       - name: Build recovery
         shell: bash
         run: |
-          echo "===> Entrando al entorno de compilación..."
-          cd $HOME/fox_12.1 || { echo "ERROR: No existe el directorio $HOME/fox_12.1"; exit 1; }
-          
-          if [ ! -f "build/envsetup.sh" ]; then
-            echo "ERROR CRITICO: build/envsetup.sh no se encontró dentro de $HOME/fox_12.1"
-            echo "Contenido actual de $HOME/fox_12.1:"
-            ls -la
-            exit 1
-          fi
-          
-          echo "===> Cargando envsetup.sh..."
+          set -euo pipefail
+
+          cd "${FOX_PATH}"
+
+          echo "============================================"
+          echo "ORANGEFOX BUILD"
+          echo "============================================"
+
           source build/envsetup.sh
-          
+
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
-          
-          echo "===> Ejecutando lunch..."
-          lunch omni_a3core-eng || lunch fox_a3core-eng || { echo "ERROR: Falló el comando lunch"; exit 1; }
-          
-          echo "===> Iniciando compilación de recovery image..."
-          mka recoveryimage || mka recovery || { echo "ERROR: Falló la compilación de la imagen de recovery"; exit 1; }
-          
-          echo "===> Verificando directorio de salida..."
-          OUT_DIR="$HOME/fox_12.1/out/target/product/a3core"
-          if [ -d "$OUT_DIR" ]; then
-            echo "===> Archivos en $OUT_DIR:"
-            ls -la "$OUT_DIR"
-            cd "$OUT_DIR"
-            if [ -f "recovery.img" ] && [ ! -f "*.zip" ]; then
-              echo "===> Empaquetando recovery.img en zip..."
-              zip -r "OrangeFox-a3core.zip" recovery.img
-            fi
+          export USE_CCACHE=1
+          export CCACHE_EXEC="$(command -v ccache)"
+
+          echo
+          echo "TARGET_PRODUCT=${TARGET_PRODUCT}"
+          echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}"
+
+          echo
+          echo "ccache:"
+          ccache -s
+
+          echo
+          echo "Starting build..."
+
+          BUILD_START=$(date +%s)
+
+          set +e
+
+          mka \
+            -j"$(nproc)" \
+            recoveryimage \
+            2>&1 | tee "${RUNNER_TEMP}/orangefox-build.log"
+
+          BUILD_RC=${PIPESTATUS[0]}
+
+          set -e
+
+          BUILD_END=$(date +%s)
+          BUILD_TIME=$((BUILD_END - BUILD_START))
+
+          echo
+          echo "Build exit code: ${BUILD_RC}"
+          echo "Build time: ${BUILD_TIME} seconds"
+
+          if [ "${BUILD_RC}" -ne 0 ]; then
+
+            echo
+            echo "============================================"
+            echo "BUILD FAILED"
+            echo "============================================"
+
+            echo
+            echo "Last 250 build lines:"
+            tail -250 "${RUNNER_TEMP}/orangefox-build.log"
+
+            exit "${BUILD_RC}"
+          fi
+
+          echo
+          echo "Build completed successfully."
+
+      # ============================================================
+      # 14. BUSCAR RESULTADOS SIN ASUMIR RUTA
+      # ============================================================
+
+      - name: Locate recovery artifacts
+        id: artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "${FOX_PATH}"
+
+          echo "============================================"
+          echo "SEARCHING FOR OUTPUT"
+          echo "============================================"
+
+          echo
+          echo "Expected output:"
+          echo "out/target/product/${DEVICE}/"
+
+          OUT_DIR="${FOX_PATH}/out/target/product/${DEVICE}"
+
+          if [ -d "${OUT_DIR}" ]; then
+            echo
+            echo "Output directory exists:"
+            ls -lah "${OUT_DIR}"
           else
-            echo "ERROR CRITICO: No se generó la carpeta $OUT_DIR"
+            echo
+            echo "WARNING: Expected output directory does not exist."
+          fi
+
+          echo
+          echo "Searching all recovery images..."
+
+          find "${FOX_PATH}/out" \
+            -type f \
+            \( \
+              -name 'recovery.img' \
+              -o -name 'recovery.img.*' \
+              -o -name 'vendor_boot.img' \
+              -o -name 'boot.img' \
+              -o -name 'OrangeFox*.zip' \
+              -o -name '*recovery*.zip' \
+            \) \
+            -print \
+            2>/dev/null \
+            | sort
+
+          echo
+          echo "Searching ZIP files..."
+
+          find "${FOX_PATH}/out/target/product" \
+            -type f \
+            -name '*.zip' \
+            -print \
+            2>/dev/null \
+            | sort \
+            || true
+
+      # ============================================================
+      # 15. EMPAQUETAR SI SOLO TENEMOS recovery.img
+      # ============================================================
+
+      - name: Package recovery image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUT_DIR="${FOX_PATH}/out/target/product/${DEVICE}"
+
+          if [ ! -d "${OUT_DIR}" ]; then
+            echo "ERROR: Output directory does not exist:"
+            echo "${OUT_DIR}"
             exit 1
           fi
 
-      - name: Generate Release Metadata
-        id: meta
-        run: |
-          echo "===> Generando metadata del Release..."
-          FOX_VER="R11.1"
-          DATE_STR=$(date -u +"%Y%m%d-%H%M")
-          TAG_NAME="OrangeFox-${FOX_VER}-${DATE_STR}"
-          
-          if [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
-            CHANGELOG=$(git log ${{ github.event.before }}..${{ github.event.after }} --oneline)
-          else
-            CHANGELOG=$(git log -n 5 --oneline)
-          fi
-          
-          if [ -z "$CHANGELOG" ]; then
-            CHANGELOG=$(git log -1 --oneline)
-          fi
-          
-          echo "Tag a crear: ${TAG_NAME}"
-          echo "Changelog extraído:\n${CHANGELOG}"
-          
-          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
-          
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          cd "${OUT_DIR}"
 
-      - name: Upload artifact
+          echo "============================================"
+          echo "PACKAGING"
+          echo "============================================"
+
+          echo
+          echo "Output:"
+          ls -lah
+
+          if compgen -G "*.zip" > /dev/null; then
+            echo
+            echo "ZIP already exists:"
+            ls -lh *.zip
+          elif [ -f "recovery.img" ]; then
+
+            echo
+            echo "Creating OrangeFox ZIP..."
+
+            zip -9 \
+              "OrangeFox-${DEVICE}.zip" \
+              recovery.img
+
+          else
+
+            echo
+            echo "ERROR: No recovery.img and no ZIP found."
+
+            echo
+            echo "All files:"
+            find . -maxdepth 1 -type f -print
+
+            exit 1
+          fi
+
+          echo
+          echo "Final ZIP files:"
+          ls -lh *.zip
+
+      # ============================================================
+      # 16. VALIDAR ARCHIVOS
+      # ============================================================
+
+      - name: Validate artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUT_DIR="${FOX_PATH}/out/target/product/${DEVICE}"
+
+          echo "============================================"
+          echo "ARTIFACT VALIDATION"
+          echo "============================================"
+
+          ZIP_COUNT=$(find "${OUT_DIR}" -maxdepth 1 -type f -name '*.zip' | wc -l)
+
+          if [ "${ZIP_COUNT}" -eq 0 ]; then
+            echo "ERROR: No ZIP artifacts found."
+            exit 1
+          fi
+
+          echo "ZIP count: ${ZIP_COUNT}"
+
+          for zipfile in "${OUT_DIR}"/*.zip; do
+            echo
+            echo "Testing:"
+            echo "${zipfile}"
+
+            unzip -t "${zipfile}" >/dev/null
+
+            echo "OK"
+          done
+
+          if [ -f "${OUT_DIR}/recovery.img" ]; then
+            echo
+            echo "recovery.img:"
+            ls -lh "${OUT_DIR}/recovery.img"
+
+            file "${OUT_DIR}/recovery.img" || true
+          fi
+
+      # ============================================================
+      # 17. SUBIR LOGS SI FALLA
+      # ============================================================
+
+      - name: Upload build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.meta.outputs.tag_name }}
-          path: /home/runner/fox_12.1/out/target/product/*/*.zip
+          name: orangefox-build-logs-${{ github.run_number }}
+          path: |
+            /tmp/*
+            /home/runner/work/*/*/envsetup-debug.log
+            /home/runner/work/*/*/orangefox-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      # ============================================================
+      # 18. SUBIR ZIP COMO ARTIFACT
+      # ============================================================
+
+      - name: Upload recovery artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-a3core-${{ github.run_number }}
+          path: |
+            /home/runner/fox_12.1/out/target/product/a3core/*.zip
+            /home/runner/fox_12.1/out/target/product/a3core/recovery.img
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+      # ============================================================
+      # 19. METADATA
+      # ============================================================
+
+      - name: Generate release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FOX_VERSION="R11.2"
+          DATE_STR="$(date -u '+%Y%m%d-%H%M')"
+
+          TAG_NAME="OrangeFox-${DEVICE}-${FOX_VERSION}-${DATE_STR}"
+
+          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+          echo
+          echo "Release tag:"
+          echo "${TAG_NAME}"
+
+          echo
+          echo "Commits in this build:"
+
+          git log \
+            -n 20 \
+            --pretty=format:'- %h %s (%an)' \
+            > "${RUNNER_TEMP}/changelog.txt"
+
+          cat "${RUNNER_TEMP}/changelog.txt"
+
+          {
+            echo "CHANGELOG<<EOF"
+            cat "${RUNNER_TEMP}/changelog.txt"
+            echo
+            echo "Built automatically with GitHub Actions."
+            echo "Device: ${DEVICE}"
+            echo "OrangeFox branch: ${FOX_BRANCH}"
+            echo "Run: ${GITHUB_RUN_NUMBER}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # ============================================================
+      # 20. RELEASE
+      # ============================================================
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.tag_name }}
-          name: Release ${{ steps.meta.outputs.tag_name }}
-          body: ${{ steps.meta.outputs.changelog }}
-          files: /home/runner/fox_12.1/out/target/product/*/*.zip
+          tag_name: ${{ steps.meta.outputs.TAG_NAME }}
+          name: OrangeFox ${{ env.DEVICE }} ${{ steps.meta.outputs.TAG_NAME }}
+          body: |
+            # OrangeFox Recovery
+
+            **Device:** Samsung Galaxy A3 Core (`a3core`)
+
+            **OrangeFox branch:** `${{ env.FOX_BRANCH }}`
+
+            **Build:** `${{ github.run_number }}`
+
+            ## Changelog
+
+            ${{ steps.meta.outputs.CHANGELOG }}
+          files: |
+            /home/runner/fox_12.1/out/target/product/a3core/*.zip
+            /home/runner/fox_12.1/out/target/product/a3core/recovery.img
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ============================================================
+      # 21. CCACHE FINAL
+      # ============================================================
+
+      - name: Final ccache statistics
+        if: always()
+        shell: bash
+        run: |
+          echo "============================================"
+          echo "FINAL CCACHE STATISTICS"
+          echo "============================================"
+
+          ccache -s || true
