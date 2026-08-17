@@ -1,4 +1,4 @@
-# Version: 8
+# Version: 9
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
@@ -12,6 +12,7 @@
 # - Se corrigió el fallo 'No such file or directory' creando la ruta 'device/samsung/a3core' mediante 'mkdir -p' antes de clonar/copiar el device tree.
 # - Se corrigió la lógica del paso 'Build recovery' agregando manejo de errores estricto (set -e) y empaquetado automático a .zip en caso de que la compilación solo genere una imagen .img directa.
 # - Se añadieron logs detallados y diagnósticos en cada paso crítico para evitar fallos silenciosos y mostrar la ruta exacta/estado de compilación.
+# - Se cambió el shell del paso 'Build recovery' a 'bash' explícito y se añadió la verificación de existencia de 'build/envsetup.sh' antes del 'source' para evitar el crash con exit code 1.
 
 name: Build OrangeFox Recovery
 
@@ -43,7 +44,7 @@ jobs:
 
       - name: Set up build environment
         run: |
-          echo "===> Instalandos paquetes requeridos..."
+          echo "===> Instalando paquetes requeridos..."
           sudo apt-get update
           sudo apt-get install -y ccache libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 zip unzip || true
 
@@ -88,9 +89,17 @@ jobs:
           ls -la $HOME/fox_12.1/device/samsung/a3core/
 
       - name: Build recovery
+        shell: bash
         run: |
           echo "===> Entrando al entorno de compilación..."
-          cd $HOME/fox_12.1
+          cd $HOME/fox_12.1 || { echo "ERROR: No existe el directorio $HOME/fox_12.1"; exit 1; }
+          
+          if [ ! -f "build/envsetup.sh" ]; then
+            echo "ERROR CRITICO: build/envsetup.sh no se encontró dentro de $HOME/fox_12.1"
+            echo "Contenido actual de $HOME/fox_12.1:"
+            ls -la
+            exit 1
+          fi
           
           echo "===> Cargando envsetup.sh..."
           source build/envsetup.sh
@@ -99,7 +108,7 @@ jobs:
           export LC_ALL=C
           
           echo "===> Ejecutando lunch..."
-          lunch omni_a3core-eng || lunch fox_a3core-eng || { echo "ERROR: Fallo el comando lunch"; exit 1; }
+          lunch omni_a3core-eng || lunch fox_a3core-eng || { echo "ERROR: Falló el comando lunch"; exit 1; }
           
           echo "===> Iniciando compilación de recovery image..."
           mka recoveryimage || mka recovery || { echo "ERROR: Falló la compilación de la imagen de recovery"; exit 1; }
