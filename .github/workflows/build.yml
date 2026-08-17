@@ -1,4 +1,4 @@
-# Version: 3
+# Version: 4
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
@@ -6,6 +6,7 @@
 # - Se configuró la extracción del historial de commits para usarlo automáticamente como descripción (changelog) del release.
 # - Se corrigió el fallo de 'ccache: command not found' instalando ccache mediante apt-get en el paso de preparación del entorno.
 # - Se corrigió el error 'UpdateManifestError' al hacer repo init actualizando la URL del manifest al nuevo repositorio oficial 'https://gitlab.com/OrangeFox/sync.git'.
+# - Se reemplazaron los pasos de 'repo init' y 'repo sync' por el script oficial de OrangeFox (orangefox_sync.sh) clonando el repo 'sync.git' e indicando la rama 12.1 con su ruta absoluta.
 
 name: Build OrangeFox Recovery
 
@@ -50,20 +51,21 @@ jobs:
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 50G
 
-      - name: Initialize repo
+      - name: Sync OrangeFox Sources
         run: |
-          repo init --depth=1 -u https://gitlab.com/OrangeFox/sync.git -b master
+          mkdir -p ~/OrangeFox_sync
+          cd ~/OrangeFox_sync
+          git clone https://gitlab.com/OrangeFox/sync.git
+          cd sync
+          ./orangefox_sync.sh --branch 12.1 --path $HOME/fox_12.1
 
       - name: Create local manifest
         run: |
-          mkdir -p .repo/local_manifests
-
-      - name: Sync sources
-        run: |
-          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune -j$(nproc)
+          mkdir -p $HOME/fox_12.1/.repo/local_manifests
 
       - name: Build recovery
         run: |
+          cd $HOME/fox_12.1
           echo "Ejecutando compilación..."
 
       - name: Generate Release Metadata
@@ -97,7 +99,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.meta.outputs.tag_name }}
-          path: out/target/product/*/*.zip
+          path: /home/runner/fox_12.1/out/target/product/*/*.zip
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -105,6 +107,6 @@ jobs:
           tag_name: ${{ steps.meta.outputs.tag_name }}
           name: Release ${{ steps.meta.outputs.tag_name }}
           body: ${{ steps.meta.outputs.changelog }}
-          files: out/target/product/*/*.zip
+          files: /home/runner/fox_12.1/out/target/product/*/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
