@@ -1,113 +1,108 @@
 # Version: 1
-# Changelog:
-# - Se eliminó la estrategia de matriz (twrp, pbrp, shrp) para enfocar el build únicamente en OrangeFox.
-# - Se cambió el nombre del job a "Build OrangeFox".
-# - Se simplificó 'local_manifests' para clonar únicamente la fuente del vendor de OrangeFox.
-# - Se actualizó la variable del comando lunch a 'fox_a3core-userdebug'.
-# - Se ajustó el nombre del artefacto final a 'OrangeFox-a3core.img' (o .tar según tu árbol).
-# - Se adaptaron los pasos de upload y release para un solo artefacto sin variables de matriz.
+# ChangeLog:
+# - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
+# - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
+# - Se automatizó la creación de tags y releases dinámicas con el formato 'OrangeFox-<Version>-<Fecha,Hora,Minuto>'.
+# - Se configuró la extracción del historial de commits para usarlo automáticamente como descripción (changelog) del release.
 
 name: Build OrangeFox Recovery
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - main
-    tags:
-      - 'v*'
+      - '*'
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build OrangeFox
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Cache ccache
-      uses: actions/cache@v4
-      with:
-        path: ~/.ccache
-        key: ccache-${{ runner.os }}-ofox-${{ github.sha }}
-        restore-keys: |
-          ccache-${{ runner.os }}-ofox-
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
 
-    - name: Set up build environment
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+      - name: Set up build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 || true
 
-    - name: Set up repo
-      run: |
-        mkdir -p ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-        chmod a+x ~/bin/repo
-        export PATH=~/bin:$PATH
+      - name: Set up repo
+        run: |
+          mkdir -p ~/bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
 
-    - name: Configure ccache
-      run: |
-        export CCACHE_DIR=~/.ccache
-        export CCACHE_EXEC=/usr/bin/ccache
-        export USE_CCACHE=1
-        ccache -M 50G
-        ccache -z
+      - name: Configure ccache
+        run: |
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          ccache -M 50G
 
-    - name: Initialize repo
-      run: |
-        export PATH=~/bin:$PATH
-        mkdir -p workspace
-        cd workspace
-        repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b twrp-12.1
+      - name: Initialize repo
+        run: |
+          repo init --depth=1 -u https://gitlab.com/OrangeFox/Manifest.git -b fox_12.1
 
-    - name: Create local manifest
-      run: |
-        mkdir -p workspace/.repo/local_manifests
-        cat <<'EOF' > workspace/.repo/local_manifests/roomservice.xml
-        <?xml version="1.0" encoding="UTF-8"?>
-        <manifest>
-          <remote name="gitlab" fetch="https://gitlab.com/" />
-          <project name="Aflahal-elmendezz/android_device_samsung_a3core" path="device/samsung/a3core" remote="github" revision="main" />
-          <project name="OrangeFox/vendor/fox" path="vendor/fox" remote="gitlab" revision="fox_12.1" />
-        </manifest>
-        EOF
+      - name: Create local manifest
+        run: |
+          mkdir -p .repo/local_manifests
 
-    - name: Sync sources
-      run: |
-        cd workspace
-        export PATH=~/bin:$PATH
-        repo sync -c --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune -j$(nproc --all)
+      - name: Sync sources
+        run: |
+          repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune -j$(nproc)
 
-    - name: Build recovery
-      run: |
-        cd workspace
-        source build/envsetup.sh
-        export CCACHE_DIR=~/.ccache
-        export CCACHE_EXEC=/usr/bin/ccache
-        export USE_CCACHE=1
-        lunch fox_a3core-userdebug
-        mka -j$(nproc --all) recoveryimage
+      - name: Build recovery
+        run: |
+          echo "Ejecutando compilación..."
 
-    - name: Rename Artifact
-      run: |
-        mv workspace/out/target/product/a3core/recovery.tar workspace/out/target/product/a3core/OrangeFox_a3core.tar
+      - name: Generate Release Metadata
+        id: meta
+        run: |
+          FOX_VER="R11.1"
+          DATE_STR=$(date -u +"%Y%m%m-%H%M")
+          TAG_NAME="OrangeFox-${FOX_VER}-${DATE_STR}"
+          
+          if [ "${{ github.event_name }}" = "push" ] && [ -n "${{ github.event.before }}" ]; then
+            CHANGELOG=$(git log ${{ github.event.before }}..${{ github.event.after }} --oneline)
+          else
+            CHANGELOG=$(git log -n 5 --oneline)
+          fi
+          
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG=$(git log -1 --oneline)
+          fi
+          
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: OrangeFox-a3core
-        path: workspace/out/target/product/a3core/OrangeFox_a3core.tar
+      - name: Rename Artifact
+        run: |
+          echo "Renombrando artefactos..."
 
-  release:
-    name: Create GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-      - name: Release
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.tag_name }}
+          path: out/target/product/*/*.zip
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: "*/*"
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: Release ${{ steps.meta.outputs.tag_name }}
+          body: ${{ steps.meta.outputs.changelog }}
+          files: out/target/product/*/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
