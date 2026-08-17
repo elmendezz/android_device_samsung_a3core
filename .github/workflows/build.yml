@@ -26,7 +26,7 @@ jobs:
     steps:
 
       # ============================================================
-      # 1. CHECKOUT DEL DEVICE TREE
+      # 1. CHECKOUT DEVICE TREE
       # ============================================================
 
       - name: Checkout device tree
@@ -35,18 +35,19 @@ jobs:
           fetch-depth: 0
 
       # ============================================================
-      # 2. INFORMACIÓN DEL RUNNER
+      # 2. RUNNER DIAGNOSTICS
       # ============================================================
 
       - name: Runner diagnostics
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
 
           echo "============================================"
           echo "RUNNER INFORMATION"
           echo "============================================"
 
+          echo
           echo "OS:"
           cat /etc/os-release
 
@@ -68,21 +69,21 @@ jobs:
           df -h
 
           echo
-          echo "WORKSPACE:"
+          echo "Workspace:"
           pwd
 
           echo
-          echo "DEVICE TREE:"
+          echo "Device tree:"
           find . -maxdepth 2 -type f | sort
 
       # ============================================================
-      # 3. DEPENDENCIAS
+      # 3. DEPENDENCIES
       # ============================================================
 
       - name: Install build dependencies
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
 
           echo "============================================"
           echo "INSTALLING BUILD DEPENDENCIES"
@@ -140,24 +141,20 @@ jobs:
           python3 --version
 
           echo
-          echo "Git:"
-          git --version
-
-          echo
           echo "ccache:"
           ccache --version
 
       # ============================================================
-      # 4. CONFIGURAR CCACHE
+      # 4. CCACHE
       # ============================================================
 
       - name: Configure ccache
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
 
           echo "============================================"
-          echo "CCACHE"
+          echo "CONFIGURING CCACHE"
           echo "============================================"
 
           mkdir -p "$HOME/.ccache"
@@ -165,7 +162,6 @@ jobs:
           ccache --set-config=max_size=50G
           ccache --set-config=compression=true
 
-          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
           echo "USE_CCACHE=1" >> "$GITHUB_ENV"
           echo "CCACHE_EXEC=$(command -v ccache)" >> "$GITHUB_ENV"
 
@@ -181,13 +177,13 @@ jobs:
             orangefox-ccache-${{ runner.os }}-
 
       # ============================================================
-      # 5. INSTALAR REPO
+      # 5. REPO
       # ============================================================
 
       - name: Install repo tool
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
 
           echo "============================================"
           echo "INSTALLING REPO"
@@ -206,19 +202,20 @@ jobs:
           "$HOME/bin/repo" --version
 
       # ============================================================
-      # 6. SINCRONIZAR ORANGEFOX
+      # 6. ORANGEFOX SYNC
       # ============================================================
 
       - name: Sync OrangeFox sources
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
 
           echo "============================================"
           echo "ORANGEFOX SOURCE SYNC"
           echo "============================================"
 
           rm -rf "$HOME/OrangeFox_sync"
+          rm -rf "$FOX_PATH"
 
           mkdir -p "$HOME/OrangeFox_sync"
 
@@ -232,8 +229,9 @@ jobs:
 
           chmod +x orangefox_sync.sh
 
-          echo "Sync script:"
-          ./orangefox_sync.sh --help || true
+          echo
+          echo "OrangeFox sync script:"
+          ./orangefox_sync.sh --help
 
           echo
           echo "Starting OrangeFox ${FOX_BRANCH} sync..."
@@ -244,42 +242,42 @@ jobs:
 
           echo
           echo "============================================"
-          echo "SYNC FINISHED"
+          echo "ORANGEFOX SYNC FINISHED"
           echo "============================================"
 
           test -d "${FOX_PATH}"
           test -d "${FOX_PATH}/build"
 
           echo
-          echo "Fox directory:"
+          echo "Fox tree:"
           ls -lah "${FOX_PATH}"
 
           echo
-          echo "build/envsetup.sh:"
+          echo "envsetup:"
           ls -lh "${FOX_PATH}/build/envsetup.sh"
 
+          echo
+          echo "Repo status:"
+          cd "${FOX_PATH}"
+
+          repo status || true
+
       # ============================================================
-      # 7. COPIAR DEVICE TREE DE FORMA LIMPIA
+      # 7. INSTALL DEVICE TREE
       # ============================================================
 
       - name: Install a3core device tree
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
 
           echo "============================================"
-          echo "INSTALLING DEVICE TREE"
+          echo "INSTALLING A3CORE DEVICE TREE"
           echo "============================================"
 
           DEVICE_PATH="${FOX_PATH}/device/${VENDOR}/${DEVICE}"
 
           mkdir -p "${DEVICE_PATH}"
-
-          echo "Destination:"
-          echo "${DEVICE_PATH}"
-
-          # Copiamos solamente el contenido del device tree.
-          # Excluimos .git y archivos propios de GitHub Actions.
 
           rsync -a \
             --exclude='.git' \
@@ -288,15 +286,19 @@ jobs:
             "${DEVICE_PATH}/"
 
           echo
-          echo "Installed device tree:"
+          echo "Device tree installed at:"
+          echo "${DEVICE_PATH}"
+
+          echo
+          echo "Files:"
           find "${DEVICE_PATH}" -maxdepth 2 -type f | sort
 
           echo
-          echo "Checking required files..."
+          echo "Required files:"
 
           REQUIRED_FILES=(
-            "AndroidProducts.mk"
             "Android.mk"
+            "AndroidProducts.mk"
             "BoardConfig.mk"
             "device.mk"
           )
@@ -306,19 +308,18 @@ jobs:
               echo "ERROR: Missing ${file}"
               exit 1
             fi
+
+            echo "OK: ${file}"
           done
 
-          echo "All mandatory files exist."
-
       # ============================================================
-      # 8. INSPECCIONAR ANDROIDPRODUCTS.MK
+      # 8. DEVICE TREE ANALYSIS
       # ============================================================
 
-      - name: Detect build targets
-        id: targets
+      - name: Analyze device tree
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           DEVICE_PATH="${FOX_PATH}/device/${VENDOR}/${DEVICE}"
 
@@ -327,96 +328,43 @@ jobs:
           echo "============================================"
 
           echo
-          echo "AndroidProducts.mk:"
+          echo "===== AndroidProducts.mk ====="
           cat "${DEVICE_PATH}/AndroidProducts.mk"
 
           echo
-          echo "BoardConfig.mk:"
-          sed -n '1,240p' "${DEVICE_PATH}/BoardConfig.mk"
+          echo "===== BoardConfig.mk ====="
+          sed -n '1,260p' "${DEVICE_PATH}/BoardConfig.mk"
 
           echo
-          echo "Device makefiles:"
+          echo "===== Product makefiles ====="
+
           find "${DEVICE_PATH}" \
             -maxdepth 1 \
             -type f \
-            -name '*a3core*.mk' \
+            \( \
+              -name '*a3core*.mk' \
+              -o -name 'AndroidProducts.mk' \
+            \) \
             -print \
             | sort
 
           echo
-          echo "============================================"
-          echo "PRODUCT DEFINITIONS"
-          echo "============================================"
+          echo "===== twrp.dependencies ====="
 
-          PRODUCTS="$(
-            grep -rhoE \
-              '([A-Za-z0-9_]+_a3core|[A-Za-z0-9_]+a3core)' \
-              "${DEVICE_PATH}/AndroidProducts.mk" \
-              "${DEVICE_PATH}"/*.mk \
-              2>/dev/null \
-              | sort -u \
-              | tr '\n' ' ' \
-              || true
-          )"
-
-          echo "Detected product names:"
-          echo "${PRODUCTS}"
-
-          if [ -z "${PRODUCTS}" ]; then
-            echo
-            echo "WARNING: No product name could be extracted automatically."
-          fi
-
-          echo "PRODUCT_CANDIDATES=${PRODUCTS}" >> "$GITHUB_OUTPUT"
-
-      # ============================================================
-      # 9. VERIFICAR DEPENDENCIAS DEL DEVICE TREE
-      # ============================================================
-
-      - name: Resolve device dependencies
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          DEVICE_PATH="${FOX_PATH}/device/${VENDOR}/${DEVICE}"
-
-          cd "${DEVICE_PATH}"
-
-          echo "============================================"
-          echo "DEVICE DEPENDENCIES"
-          echo "============================================"
-
-          if [ -f "twrp.dependencies" ]; then
-            echo "Found twrp.dependencies:"
-            cat twrp.dependencies
-
-            cd "${FOX_PATH}"
-
-            echo
-            echo "Running repo sync for dependency manifests..."
-
-            repo sync \
-              --force-sync \
-              --no-clone-bundle \
-              --no-tags \
-              -j"$(nproc)" \
-              || {
-                echo
-                echo "WARNING: repo sync reported dependency errors."
-                echo "Continuing so the build diagnostics can identify them."
-              }
+          if [ -f "${DEVICE_PATH}/twrp.dependencies" ]; then
+            cat "${DEVICE_PATH}/twrp.dependencies"
           else
-            echo "No twrp.dependencies found."
+            echo "No twrp.dependencies"
           fi
 
       # ============================================================
-      # 10. VERIFICAR ESTRUCTURA COMPLETA
+      # 9. VALIDATE SOURCE TREE
       # ============================================================
 
-      - name: Validate OrangeFox tree
+      - name: Validate source tree
         shell: bash
         run: |
-          set -euxo pipefail
+          set -eo pipefail
 
           cd "${FOX_PATH}"
 
@@ -433,35 +381,44 @@ jobs:
           )
 
           for dir in "${REQUIRED_DIRS[@]}"; do
+
             if [ ! -d "${dir}" ]; then
-              echo "ERROR: Missing directory: ${dir}"
+              echo "ERROR: Missing directory:"
+              echo "${dir}"
               exit 1
             fi
 
             echo "OK: ${dir}"
+
           done
 
           echo
           echo "envsetup:"
           test -f build/envsetup.sh
+
           ls -lh build/envsetup.sh
 
           echo
-          echo "OrangeFox recovery:"
+          echo "Recovery repository:"
           git -C bootable/recovery status --short || true
 
           echo
-          echo "Vendor recovery:"
+          echo "Vendor recovery repository:"
           git -C vendor/recovery status --short || true
 
       # ============================================================
-      # 11. CARGAR ENVSETUP CON DIAGNÓSTICO
+      # 10. LOAD ENVSETUP
+      #
+      # IMPORTANT:
+      # nounset (-u) MUST NOT be active here.
+      # OrangeFox envsetup accesses unset variables such as
+      # TOP and ZSH_VERSION.
       # ============================================================
 
       - name: Load Android build environment
         shell: bash
         run: |
-          set -uo pipefail
+          set -eo pipefail
 
           cd "${FOX_PATH}"
 
@@ -469,6 +426,7 @@ jobs:
           echo "LOADING ENVSETUP"
           echo "============================================"
 
+          echo
           echo "Shell:"
           bash --version | head -1
 
@@ -476,75 +434,89 @@ jobs:
           echo "Before source:"
           echo "PWD=$(pwd)"
           echo "ANDROID_BUILD_TOP=${ANDROID_BUILD_TOP:-<unset>}"
+          echo "TOP=${TOP:-<unset>}"
 
           echo
-          echo "Running envsetup.sh..."
+          echo "Loading OrangeFox envsetup..."
 
-          set +e
+          # --------------------------------------------------------
+          # DO NOT ENABLE set -u HERE.
+          #
+          # OrangeFox/AOSP envsetup references variables that may
+          # not exist yet.
+          # --------------------------------------------------------
+
+          set +u
 
           source build/envsetup.sh
 
-          RC=$?
+          ENV_RC=$?
 
-          set -e
+          set -u
 
           echo
-          echo "envsetup.sh exit code: ${RC}"
+          echo "envsetup exit code: ${ENV_RC}"
 
-          if [ "${RC}" -ne 0 ]; then
+          if [ "${ENV_RC}" -ne 0 ]; then
+
             echo
             echo "============================================"
             echo "ENVSETUP FAILED"
             echo "============================================"
 
             echo
-            echo "Running envsetup.sh under bash -x..."
+            echo "Running diagnostic trace..."
 
+            set +u
             set +e
+
             bash -x build/envsetup.sh \
               2>&1 \
               | tee "${RUNNER_TEMP}/envsetup-debug.log"
 
             DEBUG_RC=${PIPESTATUS[0]}
 
-            echo
-            echo "Debug exit code: ${DEBUG_RC}"
+            set -e
+            set -u
 
             echo
-            echo "Last 150 lines:"
-            tail -150 "${RUNNER_TEMP}/envsetup-debug.log"
+            echo "Diagnostic exit code: ${DEBUG_RC}"
 
-            exit "${RC}"
+            echo
+            echo "Last 200 lines:"
+            tail -200 "${RUNNER_TEMP}/envsetup-debug.log"
+
+            exit "${ENV_RC}"
           fi
 
           echo
-          echo "envsetup.sh loaded successfully."
+          echo "============================================"
+          echo "ENVSETUP LOADED SUCCESSFULLY"
+          echo "============================================"
 
           echo
           echo "ANDROID_BUILD_TOP=${ANDROID_BUILD_TOP:-<unset>}"
+          echo "TOP=${TOP:-<unset>}"
           echo "OUT_DIR=${OUT_DIR:-<unset>}"
 
-          echo
-          echo "Available lunch products:"
-
-          lunch 2>&1 | head -200 || true
-
       # ============================================================
-      # 12. SELECCIONAR LUNCH AUTOMÁTICAMENTE
+      # 11. DETECT COMMON_LUNCH_CHOICES
       # ============================================================
 
-      - name: Select lunch target
+      - name: Detect lunch targets
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           cd "${FOX_PATH}"
 
           echo "============================================"
-          echo "SELECTING LUNCH TARGET"
+          echo "DETECTING LUNCH TARGETS"
           echo "============================================"
 
+          set +u
           source build/envsetup.sh
+          set -u
 
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
@@ -552,124 +524,162 @@ jobs:
           export CCACHE_EXEC="$(command -v ccache)"
 
           echo
-          echo "All available lunch targets containing a3core:"
-
-          lunch 2>&1 \
-            | grep -i "a3core" \
-            | head -100 \
-            || true
-
-          echo
-          echo "Inspecting AndroidProducts.mk..."
-
+          echo "AndroidProducts.mk:"
           cat "device/samsung/a3core/AndroidProducts.mk"
 
           echo
-          echo "Searching for lunch-compatible product definitions..."
+          echo "Searching COMMON_LUNCH_CHOICES..."
 
-          CANDIDATES=()
-
-          while IFS= read -r product; do
-            [ -z "$product" ] && continue
-
-            case "$product" in
-              *a3core*)
-                CANDIDATES+=("$product")
-                ;;
-            esac
-          done < <(
-            grep -rhoE \
-              'PRODUCT_MAKEFILES[[:space:]]*:?=[^#]*|COMMON_LUNCH_CHOICES[[:space:]]*:?=[^#]*' \
+          COMMON_CHOICES="$(
+            grep -R \
+              -h \
+              -E 'COMMON_LUNCH_CHOICES' \
               device/samsung/a3core \
               2>/dev/null \
-              | grep -oE '[A-Za-z0-9_.-]*a3core[A-Za-z0-9_.-]*' \
-              | sort -u
-          )
+              || true
+          )"
+
+          echo "${COMMON_CHOICES}"
 
           echo
-          echo "Detected candidates:"
-          printf '%s\n' "${CANDIDATES[@]}" || true
+          echo "Available lunch entries containing a3core:"
+
+          lunch 2>&1 \
+            | grep -i a3core \
+            | head -100 \
+            || true
+
+      # ============================================================
+      # 12. SELECT LUNCH
+      # ============================================================
+
+      - name: Select lunch target
+        shell: bash
+        run: |
+          set -eo pipefail
+
+          cd "${FOX_PATH}"
+
+          echo "============================================"
+          echo "SELECTING LUNCH TARGET"
+          echo "============================================"
+
+          set +u
+          source build/envsetup.sh
+          set -u
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export USE_CCACHE=1
+          export CCACHE_EXEC="$(command -v ccache)"
 
           SUCCESS=0
 
           # --------------------------------------------------------
-          # Intentamos primero los targets declarados por
-          # COMMON_LUNCH_CHOICES.
+          # Primero obtenemos targets desde AndroidProducts.mk.
           # --------------------------------------------------------
+
+          TARGETS=()
 
           while IFS= read -r target; do
             [ -z "$target" ] && continue
 
-            echo
-            echo "Trying lunch target:"
-            echo "  ${target}"
+            case "$target" in
+              *a3core*)
+                TARGETS+=("$target")
+                ;;
+            esac
 
-            if lunch "${target}"; then
-              echo
-              echo "============================================"
-              echo "SUCCESSFUL LUNCH"
-              echo "============================================"
-
-              echo "TARGET_PRODUCT=${TARGET_PRODUCT}"
-              echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}"
-              echo "TARGET_BUILD_TYPE=${TARGET_BUILD_TYPE:-unknown}"
-
-              {
-                echo "TARGET_PRODUCT=${TARGET_PRODUCT}"
-                echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}"
-              } >> "$GITHUB_ENV"
-
-              SUCCESS=1
-              break
-            fi
           done < <(
-            grep -rhoE \
-              'COMMON_LUNCH_CHOICES[[:space:]]*:?=[^#]*' \
+            grep -R \
+              -h \
+              -E 'COMMON_LUNCH_CHOICES' \
               device/samsung/a3core \
               2>/dev/null \
               | grep -oE '[A-Za-z0-9_.-]*a3core[A-Za-z0-9_.-]*-[A-Za-z0-9_.-]+' \
               | sort -u
           )
 
+          echo
+          echo "Detected targets:"
+          printf '  %s\n' "${TARGETS[@]}" || true
+
           # --------------------------------------------------------
-          # Fallbacks.
+          # Intentar targets declarados.
           # --------------------------------------------------------
 
-          if [ "$SUCCESS" -eq 0 ]; then
+          for target in "${TARGETS[@]}"; do
+
+            echo
+            echo "Trying:"
+            echo "  lunch ${target}"
+
+            if lunch "${target}"; then
+
+              echo
+              echo "============================================"
+              echo "LUNCH SUCCESS"
+              echo "============================================"
+
+              echo "TARGET_PRODUCT=${TARGET_PRODUCT}"
+              echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}"
+
+              echo "TARGET_PRODUCT=${TARGET_PRODUCT}" >> "$GITHUB_ENV"
+              echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}" >> "$GITHUB_ENV"
+
+              SUCCESS=1
+              break
+
+            fi
+
+          done
+
+          # --------------------------------------------------------
+          # Fallbacks solamente como último recurso.
+          # --------------------------------------------------------
+
+          if [ "${SUCCESS}" -eq 0 ]; then
 
             FALLBACKS=(
+              "ofox_a3core-eng"
               "twrp_a3core-eng"
               "omni_a3core-eng"
               "fox_a3core-eng"
-              "ofox_a3core-eng"
             )
 
             for target in "${FALLBACKS[@]}"; do
 
               echo
               echo "Trying fallback:"
-              echo "  ${target}"
+              echo "  lunch ${target}"
 
               if lunch "${target}"; then
 
                 echo
-                echo "SUCCESS:"
-                echo "${target}"
+                echo "============================================"
+                echo "LUNCH SUCCESS"
+                echo "============================================"
+
+                echo "TARGET_PRODUCT=${TARGET_PRODUCT}"
+                echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}"
 
                 echo "TARGET_PRODUCT=${TARGET_PRODUCT}" >> "$GITHUB_ENV"
                 echo "TARGET_BUILD_VARIANT=${TARGET_BUILD_VARIANT}" >> "$GITHUB_ENV"
 
                 SUCCESS=1
                 break
+
               fi
 
             done
+
           fi
 
-          if [ "$SUCCESS" -ne 1 ]; then
+          if [ "${SUCCESS}" -ne 1 ]; then
+
             echo
             echo "============================================"
-            echo "NO VALID LUNCH TARGET"
+            echo "NO VALID LUNCH TARGET FOUND"
             echo "============================================"
 
             echo
@@ -677,7 +687,7 @@ jobs:
             cat device/samsung/a3core/AndroidProducts.mk
 
             echo
-            echo "All products mentioning a3core:"
+            echo "Available a3core targets:"
             lunch 2>&1 \
               | grep -i a3core \
               | head -200 \
@@ -687,13 +697,13 @@ jobs:
           fi
 
       # ============================================================
-      # 13. COMPILACIÓN
+      # 13. BUILD
       # ============================================================
 
       - name: Build recovery
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           cd "${FOX_PATH}"
 
@@ -701,7 +711,10 @@ jobs:
           echo "ORANGEFOX BUILD"
           echo "============================================"
 
+          # Nuevamente: NO nounset mientras se carga envsetup.
+          set +u
           source build/envsetup.sh
+          set -u
 
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
@@ -717,7 +730,11 @@ jobs:
           ccache -s
 
           echo
-          echo "Starting build..."
+          echo "Disk before build:"
+          df -h
+
+          echo
+          echo "Starting recoveryimage build..."
 
           BUILD_START=$(date +%s)
 
@@ -726,7 +743,8 @@ jobs:
           mka \
             -j"$(nproc)" \
             recoveryimage \
-            2>&1 | tee "${RUNNER_TEMP}/orangefox-build.log"
+            2>&1 \
+            | tee "${RUNNER_TEMP}/orangefox-build.log"
 
           BUILD_RC=${PIPESTATUS[0]}
 
@@ -737,7 +755,7 @@ jobs:
 
           echo
           echo "Build exit code: ${BUILD_RC}"
-          echo "Build time: ${BUILD_TIME} seconds"
+          echo "Build duration: ${BUILD_TIME}s"
 
           if [ "${BUILD_RC}" -ne 0 ]; then
 
@@ -747,105 +765,105 @@ jobs:
             echo "============================================"
 
             echo
-            echo "Last 250 build lines:"
-            tail -250 "${RUNNER_TEMP}/orangefox-build.log"
+            echo "Last 300 lines:"
+            tail -300 "${RUNNER_TEMP}/orangefox-build.log"
 
             exit "${BUILD_RC}"
           fi
 
           echo
-          echo "Build completed successfully."
+          echo "============================================"
+          echo "BUILD SUCCESSFUL"
+          echo "============================================"
 
       # ============================================================
-      # 14. BUSCAR RESULTADOS SIN ASUMIR RUTA
+      # 14. FIND OUTPUT
       # ============================================================
 
-      - name: Locate recovery artifacts
-        id: artifacts
+      - name: Locate recovery output
         shell: bash
         run: |
-          set -euo pipefail
-
-          cd "${FOX_PATH}"
-
-          echo "============================================"
-          echo "SEARCHING FOR OUTPUT"
-          echo "============================================"
-
-          echo
-          echo "Expected output:"
-          echo "out/target/product/${DEVICE}/"
+          set -eo pipefail
 
           OUT_DIR="${FOX_PATH}/out/target/product/${DEVICE}"
 
+          echo "============================================"
+          echo "LOCATING BUILD OUTPUT"
+          echo "============================================"
+
           if [ -d "${OUT_DIR}" ]; then
+
             echo
-            echo "Output directory exists:"
+            echo "Expected output directory:"
+            echo "${OUT_DIR}"
+
+            echo
+            echo "Files:"
             ls -lah "${OUT_DIR}"
+
           else
+
             echo
-            echo "WARNING: Expected output directory does not exist."
+            echo "WARNING: Expected directory not found:"
+            echo "${OUT_DIR}"
+
           fi
 
           echo
-          echo "Searching all recovery images..."
+          echo "Searching recovery images..."
 
           find "${FOX_PATH}/out" \
             -type f \
             \( \
               -name 'recovery.img' \
-              -o -name 'recovery.img.*' \
-              -o -name 'vendor_boot.img' \
-              -o -name 'boot.img' \
-              -o -name 'OrangeFox*.zip' \
-              -o -name '*recovery*.zip' \
+              -o -name 'recovery*.img' \
+              -o -name '*.zip' \
             \) \
             -print \
             2>/dev/null \
             | sort
 
-          echo
-          echo "Searching ZIP files..."
-
-          find "${FOX_PATH}/out/target/product" \
-            -type f \
-            -name '*.zip' \
-            -print \
-            2>/dev/null \
-            | sort \
-            || true
-
       # ============================================================
-      # 15. EMPAQUETAR SI SOLO TENEMOS recovery.img
+      # 15. PACKAGE
       # ============================================================
 
-      - name: Package recovery image
+      - name: Package recovery
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           OUT_DIR="${FOX_PATH}/out/target/product/${DEVICE}"
 
+          echo "============================================"
+          echo "PACKAGING RECOVERY"
+          echo "============================================"
+
           if [ ! -d "${OUT_DIR}" ]; then
-            echo "ERROR: Output directory does not exist:"
+            echo "ERROR: Output directory missing:"
             echo "${OUT_DIR}"
             exit 1
           fi
 
           cd "${OUT_DIR}"
 
-          echo "============================================"
-          echo "PACKAGING"
-          echo "============================================"
-
           echo
-          echo "Output:"
+          echo "Output files:"
           ls -lah
 
+          # --------------------------------------------------------
+          # Si OrangeFox ya produjo ZIP, conservarlo.
+          # --------------------------------------------------------
+
           if compgen -G "*.zip" > /dev/null; then
+
             echo
-            echo "ZIP already exists:"
+            echo "Existing ZIP files:"
             ls -lh *.zip
+
+          # --------------------------------------------------------
+          # Si solamente produjo recovery.img, crear ZIP.
+          # --------------------------------------------------------
+
           elif [ -f "recovery.img" ]; then
 
             echo
@@ -858,63 +876,73 @@ jobs:
           else
 
             echo
-            echo "ERROR: No recovery.img and no ZIP found."
+            echo "ERROR: Neither recovery.img nor ZIP was generated."
 
             echo
-            echo "All files:"
+            echo "Complete output:"
             find . -maxdepth 1 -type f -print
 
             exit 1
           fi
 
           echo
-          echo "Final ZIP files:"
+          echo "Final artifacts:"
           ls -lh *.zip
 
       # ============================================================
-      # 16. VALIDAR ARCHIVOS
+      # 16. VALIDATE ARTIFACTS
       # ============================================================
 
       - name: Validate artifacts
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           OUT_DIR="${FOX_PATH}/out/target/product/${DEVICE}"
 
           echo "============================================"
-          echo "ARTIFACT VALIDATION"
+          echo "VALIDATING ARTIFACTS"
           echo "============================================"
 
-          ZIP_COUNT=$(find "${OUT_DIR}" -maxdepth 1 -type f -name '*.zip' | wc -l)
-
-          if [ "${ZIP_COUNT}" -eq 0 ]; then
-            echo "ERROR: No ZIP artifacts found."
-            exit 1
-          fi
+          ZIP_COUNT=$(
+            find "${OUT_DIR}" \
+              -maxdepth 1 \
+              -type f \
+              -name '*.zip' \
+              | wc -l
+          )
 
           echo "ZIP count: ${ZIP_COUNT}"
 
+          if [ "${ZIP_COUNT}" -eq 0 ]; then
+            echo "ERROR: No ZIP found."
+            exit 1
+          fi
+
           for zipfile in "${OUT_DIR}"/*.zip; do
+
             echo
             echo "Testing:"
             echo "${zipfile}"
 
             unzip -t "${zipfile}" >/dev/null
 
-            echo "OK"
+            echo "ZIP OK"
+
           done
 
           if [ -f "${OUT_DIR}/recovery.img" ]; then
+
             echo
-            echo "recovery.img:"
+            echo "Recovery image:"
             ls -lh "${OUT_DIR}/recovery.img"
 
             file "${OUT_DIR}/recovery.img" || true
+
           fi
 
       # ============================================================
-      # 17. SUBIR LOGS SI FALLA
+      # 17. BUILD LOGS
       # ============================================================
 
       - name: Upload build logs
@@ -923,14 +951,13 @@ jobs:
         with:
           name: orangefox-build-logs-${{ github.run_number }}
           path: |
-            /tmp/*
-            /home/runner/work/*/*/envsetup-debug.log
-            /home/runner/work/*/*/orangefox-build.log
+            ${{ runner.temp }}/envsetup-debug.log
+            ${{ runner.temp }}/orangefox-build.log
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 14
 
       # ============================================================
-      # 18. SUBIR ZIP COMO ARTIFACT
+      # 18. RECOVERY ARTIFACT
       # ============================================================
 
       - name: Upload recovery artifact
@@ -952,37 +979,39 @@ jobs:
         id: meta
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           FOX_VERSION="R11.2"
           DATE_STR="$(date -u '+%Y%m%d-%H%M')"
 
           TAG_NAME="OrangeFox-${DEVICE}-${FOX_VERSION}-${DATE_STR}"
 
-          echo "TAG_NAME=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+          echo "============================================"
+          echo "RELEASE METADATA"
+          echo "============================================"
 
           echo
-          echo "Release tag:"
+          echo "Tag:"
           echo "${TAG_NAME}"
 
           echo
-          echo "Commits in this build:"
+          echo "Changelog:"
 
-          git log \
-            -n 20 \
-            --pretty=format:'- %h %s (%an)' \
-            > "${RUNNER_TEMP}/changelog.txt"
-
-          cat "${RUNNER_TEMP}/changelog.txt"
+          CHANGELOG="$(
+            git log \
+              -n 20 \
+              --pretty=format:'- %h %s (%an)'
+          )"
 
           {
-            echo "CHANGELOG<<EOF"
-            cat "${RUNNER_TEMP}/changelog.txt"
+            echo "changelog<<EOF"
+            echo "${CHANGELOG}"
             echo
-            echo "Built automatically with GitHub Actions."
             echo "Device: ${DEVICE}"
             echo "OrangeFox branch: ${FOX_BRANCH}"
-            echo "Run: ${GITHUB_RUN_NUMBER}"
+            echo "GitHub Actions run: ${GITHUB_RUN_NUMBER}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -993,8 +1022,8 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.meta.outputs.TAG_NAME }}
-          name: OrangeFox ${{ env.DEVICE }} ${{ steps.meta.outputs.TAG_NAME }}
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: OrangeFox ${{ env.DEVICE }} ${{ steps.meta.outputs.tag_name }}
           body: |
             # OrangeFox Recovery
 
@@ -1006,7 +1035,7 @@ jobs:
 
             ## Changelog
 
-            ${{ steps.meta.outputs.CHANGELOG }}
+            ${{ steps.meta.outputs.changelog }}
           files: |
             /home/runner/fox_12.1/out/target/product/a3core/*.zip
             /home/runner/fox_12.1/out/target/product/a3core/recovery.img
@@ -1014,7 +1043,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ============================================================
-      # 21. CCACHE FINAL
+      # 21. FINAL CCACHE
       # ============================================================
 
       - name: Final ccache statistics
