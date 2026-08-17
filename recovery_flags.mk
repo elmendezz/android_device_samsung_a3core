@@ -13,7 +13,7 @@ TARGET_USES_LOGD := true
 #TWRP_EVENT_LOGGING := true
 
 # Common configuration
-BOARD_COMMON_MAINTAINER_NAME := A03Core-Aflahal
+BOARD_COMMON_MAINTAINER_NAME := A03Core-Aflahal-elmendezz
 BOARD_COMMON_RECOVERY_LANGUAGE := en
 BOARD_COMMON_BACKLIGHT_PATH := /sys/class/backlight/sprd_backlight/brightness
 BOARD_COMMON_FLASHLIGHT_PATH := /sys/devices/virtual/misc/sprd_flash/test
@@ -30,6 +30,8 @@ TW_DEFAULT_BRIGHTNESS := 50
 TW_NO_SCREEN_BLANK := true
 TW_SCREEN_BLANK_ON_BOOT := true
 
+# TWRP Dark Theme
+TW_USE_DARK_THEME := true
 # TWRP Fix Clock,Cpu temp, battery persentase position
 TW_STATUS_ICONS_ALIGN := center
 TW_CUSTOM_CPU_POS := 50
@@ -85,6 +87,7 @@ PBRP_DEVICE := a3core
 PBRP_DEFAULT_LANG := $(BOARD_COMMON_RECOVERY_LANGUAGE)
 PB_TORCH_PATH := $(strip "$(BOARD_COMMON_FLASHLIGHT_PATH)")
 PB_VIBRATOR_PATH := $(strip "$(BOARD_COMMON_VIBRATOR_PATH)")
+PB_USE_DARK_THEME := true
 PB_DISABLE_DEFAULT_DM_VERITY := true
 
 # OrangeFox Configuration

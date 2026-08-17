@@ -20,8 +20,8 @@ PRODUCT_RELEASE_NAME := a3core
 # Inherit from common AOSP config
 $(call inherit-product, $(SRC_TARGET_DIR)/product/aosp_base.mk)
 
-# Inherit some common TWRP stuff.
-$(call inherit-product, vendor/twrp/config/common.mk)
+# Inherit some common OrangeFox stuff.
+$(call inherit-product, vendor/fox/config/common.mk)
 
 # Inherit device configuration
 $(call inherit-product, device/samsung/a3core/device.mk)

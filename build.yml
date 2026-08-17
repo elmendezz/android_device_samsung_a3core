@@ -1,0 +1,113 @@
+name: Build All Recoveries
+
+on:
+  workflow_dispatch: # Permite iniciar la compilación manualmente desde la pestaña Actions en GitHub
+  push:
+    branches:
+      - main # O la rama principal que uses
+    tags:
+      - 'v*' # Se activa al empujar un tag que empiece con 'v'
+
+jobs:
+  build:
+    name: Build ${{ matrix.recovery }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        recovery: [twrp, pbrp, shrp, ofox] # Matriz con el nombre de cada recovery
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Cache ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.ccache
+        key: ccache-${{ runner.os }}-${{ matrix.recovery }}-${{ github.sha }}
+        restore-keys: |
+          ccache-${{ runner.os }}-${{ matrix.recovery }}-
+
+    - name: Set up build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev libelf-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev
+
+    - name: Set up repo
+      run: |
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        export PATH=~/bin:$PATH
+
+    - name: Configure ccache
+      run: |
+        export CCACHE_DIR=~/.ccache
+        export CCACHE_EXEC=/usr/bin/ccache
+        export USE_CCACHE=1
+        ccache -M 50G # Establece el tamaño máximo de la caché a 50GB
+        ccache -z # Resetea las estadísticas
+
+    - name: Initialize repo
+      run: |
+        export PATH=~/bin:$PATH
+        mkdir -p workspace
+        cd workspace
+        # Usamos un manifiesto común para compilaciones de recovery. Ajusta la URL y la rama si es necesario.
+        repo init --depth=1 -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git -b twrp-12.1
+
+    - name: Create local manifest
+      run: |
+        mkdir -p workspace/.repo/local_manifests
+        # Este manifiesto local clonará tu árbol de dispositivo y las dependencias de cada recovery.
+        # Asegúrate de que las rutas y ramas de los repositorios de vendor sean correctas.
+        cat <<'EOF' > workspace/.repo/local_manifests/roomservice.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="gitlab" fetch="https://gitlab.com/" />
+  <project name="Aflahal-elmendezz/android_device_samsung_a3core" path="device/samsung/a3core" remote="github" revision="main" />
+  <project name="TeamWin/android_vendor_twrp" path="vendor/twrp" remote="github" revision="12.1" />
+  <project name="PitchBlackRecoveryProject/android_vendor_pb" path="vendor/pb" remote="github" revision="12.1" />
+  <project name="SHRP-Devices/android_vendor_shrp" path="vendor/shrp" remote="github" revision="shrp-12.1" />
+  <project name="OrangeFox/vendor/fox" path="vendor/fox" remote="gitlab" revision="fox_12.1" />
+</manifest>
+        EOF
+
+    - name: Sync sources
+      run: |
+        cd workspace
+        export PATH=~/bin:$PATH
+        repo sync -c --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune -j$(nproc --all)
+
+    - name: Build recovery
+      run: |
+        cd workspace
+        source build/envsetup.sh
+        export CCACHE_DIR=~/.ccache
+        export CCACHE_EXEC=/usr/bin/ccache
+        export USE_CCACHE=1
+        lunch ${{ matrix.recovery }}_a3core-userdebug
+        mka -j$(nproc --all) recoveryimage
+
+    - name: Rename Artifact
+      run: |
+        mv workspace/out/target/product/a3core/recovery.tar workspace/out/target/product/a3core/${{ matrix.recovery }}_a3core.tar
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.recovery }}-a3core
+        path: workspace/out/target/product/a3core/${{ matrix.recovery }}_a3core.tar
+
+  release:
+    name: Create GitHub Release
+    needs: build # Se ejecuta después de que el trabajo 'build' termine para todas las matrices
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') # Solo se ejecuta si el evento fue un push a un tag
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*/*" # Sube todos los archivos de todos los artefactos descargados
