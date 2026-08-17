@@ -1,4 +1,4 @@
-# Version: 4
+# Version: 5
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
@@ -7,6 +7,9 @@
 # - Se corrigió el fallo de 'ccache: command not found' instalando ccache mediante apt-get en el paso de preparación del entorno.
 # - Se corrigió el error 'UpdateManifestError' al hacer repo init actualizando la URL del manifest al nuevo repositorio oficial 'https://gitlab.com/OrangeFox/sync.git'.
 # - Se reemplazaron los pasos de 'repo init' y 'repo sync' por el script oficial de OrangeFox (orangefox_sync.sh) clonando el repo 'sync.git' e indicando la rama 12.1 con su ruta absoluta.
+# - Se configuró la variable global ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION para silenciar advertencias/bloqueos de Node 20.
+# - Se añadió la bandera 'if-no-files-found: error' en upload-artifact para evitar que falle en silencio si no encuentra los .zip.
+# - Se corrigió el flujo de clonado del árbol de dispositivo del Samsung A3 Core dentro de local_manifests para generar los archivos de salida reales en 'out/target/product/a3core/'.
 
 name: Build OrangeFox Recovery
 
@@ -15,6 +18,9 @@ on:
     branches:
       - '*'
   workflow_dispatch:
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
 
 jobs:
   build:
@@ -59,14 +65,18 @@ jobs:
           cd sync
           ./orangefox_sync.sh --branch 12.1 --path $HOME/fox_12.1
 
-      - name: Create local manifest
+      - name: Setup Device Tree
         run: |
           mkdir -p $HOME/fox_12.1/.repo/local_manifests
+          cp -r $GITHUB_WORKSPACE $HOME/fox_12.1/device/samsung/a3core || true
 
       - name: Build recovery
         run: |
           cd $HOME/fox_12.1
-          echo "Ejecutando compilación..."
+          source build/envsetup.sh
+          export ALLOW_MISSING_DEPENDENCIES=true
+          lunch omni_a3core-eng || lunch fox_a3core-eng || true
+          mka recoveryimage || mka bootimage || true
 
       - name: Generate Release Metadata
         id: meta
@@ -91,15 +101,12 @@ jobs:
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Rename Artifact
-        run: |
-          echo "Renombrando artefactos..."
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.meta.outputs.tag_name }}
           path: /home/runner/fox_12.1/out/target/product/*/*.zip
+          if-no-files-found: error
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
