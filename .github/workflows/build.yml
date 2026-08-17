@@ -1,4 +1,4 @@
-# Version: 7
+# Version: 8
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
@@ -11,6 +11,7 @@
 # - Se añadió la bandera 'if-no-files-found: error' en upload-artifact para evitar que falle en silencio si no encuentra los .zip.
 # - Se corrigió el fallo 'No such file or directory' creando la ruta 'device/samsung/a3core' mediante 'mkdir -p' antes de clonar/copiar el device tree.
 # - Se corrigió la lógica del paso 'Build recovery' agregando manejo de errores estricto (set -e) y empaquetado automático a .zip en caso de que la compilación solo genere una imagen .img directa.
+# - Se añadieron logs detallados y diagnósticos en cada paso crítico para evitar fallos silenciosos y mostrar la ruta exacta/estado de compilación.
 
 name: Build OrangeFox Recovery
 
@@ -42,11 +43,13 @@ jobs:
 
       - name: Set up build environment
         run: |
+          echo "===> Instalandos paquetes requeridos..."
           sudo apt-get update
           sudo apt-get install -y ccache libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 zip unzip || true
 
       - name: Set up repo
         run: |
+          echo "===> Configurando repo tool..."
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
@@ -54,46 +57,72 @@ jobs:
 
       - name: Configure ccache
         run: |
+          echo "===> Configurando ccache..."
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
           ccache -M 50G
+          ccache -s
 
       - name: Sync OrangeFox Sources
         run: |
+          echo "===> Clonando e iniciando sync de OrangeFox..."
           mkdir -p ~/OrangeFox_sync
           cd ~/OrangeFox_sync
           git clone https://gitlab.com/OrangeFox/sync.git
           cd sync
           ./orangefox_sync.sh --branch 12.1 --path $HOME/fox_12.1
+          echo "===> Contenido del directorio fox_12.1 tras sync:"
+          ls -la $HOME/fox_12.1 || true
 
       - name: Setup Device Tree
         run: |
+          echo "===> Verificando estructura antes de copiar el Device Tree..."
+          if [ ! -d "$HOME/fox_12.1" ]; then
+            echo "ERROR CRITICO: La carpeta $HOME/fox_12.1 no existe!"
+            exit 1
+          fi
           mkdir -p $HOME/fox_12.1/device/samsung/a3core
+          echo "===> Copiando device tree local..."
           cp -r ./* $HOME/fox_12.1/device/samsung/a3core/ || true
+          echo "===> Verificando archivos copiados:"
+          ls -la $HOME/fox_12.1/device/samsung/a3core/
 
       - name: Build recovery
         run: |
+          echo "===> Entrando al entorno de compilación..."
           cd $HOME/fox_12.1
+          
+          echo "===> Cargando envsetup.sh..."
           source build/envsetup.sh
+          
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           
-          lunch omni_a3core-eng || lunch fox_a3core-eng
+          echo "===> Ejecutando lunch..."
+          lunch omni_a3core-eng || lunch fox_a3core-eng || { echo "ERROR: Fallo el comando lunch"; exit 1; }
           
-          mka recoveryimage || mka recovery
+          echo "===> Iniciando compilación de recovery image..."
+          mka recoveryimage || mka recovery || { echo "ERROR: Falló la compilación de la imagen de recovery"; exit 1; }
           
-          # Verificar imágenes generadas y empaquetar si no existe .zip directo
+          echo "===> Verificando directorio de salida..."
           OUT_DIR="$HOME/fox_12.1/out/target/product/a3core"
           if [ -d "$OUT_DIR" ]; then
+            echo "===> Archivos en $OUT_DIR:"
+            ls -la "$OUT_DIR"
             cd "$OUT_DIR"
             if [ -f "recovery.img" ] && [ ! -f "*.zip" ]; then
+              echo "===> Empaquetando recovery.img en zip..."
               zip -r "OrangeFox-a3core.zip" recovery.img
             fi
+          else
+            echo "ERROR CRITICO: No se generó la carpeta $OUT_DIR"
+            exit 1
           fi
 
       - name: Generate Release Metadata
         id: meta
         run: |
+          echo "===> Generando metadata del Release..."
           FOX_VER="R11.1"
           DATE_STR=$(date -u +"%Y%m%d-%H%M")
           TAG_NAME="OrangeFox-${FOX_VER}-${DATE_STR}"
@@ -107,6 +136,9 @@ jobs:
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG=$(git log -1 --oneline)
           fi
+          
+          echo "Tag a crear: ${TAG_NAME}"
+          echo "Changelog extraído:\n${CHANGELOG}"
           
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
           
