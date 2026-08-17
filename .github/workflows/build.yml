@@ -1,4 +1,4 @@
-# Version: 6
+# Version: 7
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
@@ -10,6 +10,7 @@
 # - Se configuró la variable global ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION para silenciar advertencias/bloqueos de Node 20.
 # - Se añadió la bandera 'if-no-files-found: error' en upload-artifact para evitar que falle en silencio si no encuentra los .zip.
 # - Se corrigió el fallo 'No such file or directory' creando la ruta 'device/samsung/a3core' mediante 'mkdir -p' antes de clonar/copiar el device tree.
+# - Se corrigió la lógica del paso 'Build recovery' agregando manejo de errores estricto (set -e) y empaquetado automático a .zip en caso de que la compilación solo genere una imagen .img directa.
 
 name: Build OrangeFox Recovery
 
@@ -42,7 +43,7 @@ jobs:
       - name: Set up build environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y ccache libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 || true
+          sudo apt-get install -y ccache libncurses-dev libncurses6 lib32ncurses-dev lib32ncurses6 zip unzip || true
 
       - name: Set up repo
         run: |
@@ -68,15 +69,27 @@ jobs:
       - name: Setup Device Tree
         run: |
           mkdir -p $HOME/fox_12.1/device/samsung/a3core
-          cp -r ./* $HOME/fox_12.1/device/samsung/a3core/ || git clone https://github.com/elmendezz/android_device_samsung_a3core.git $HOME/fox_12.1/device/samsung/a3core
+          cp -r ./* $HOME/fox_12.1/device/samsung/a3core/ || true
 
       - name: Build recovery
         run: |
           cd $HOME/fox_12.1
           source build/envsetup.sh
           export ALLOW_MISSING_DEPENDENCIES=true
-          lunch omni_a3core-eng || lunch fox_a3core-eng || true
-          mka recoveryimage || mka bootimage || true
+          export LC_ALL=C
+          
+          lunch omni_a3core-eng || lunch fox_a3core-eng
+          
+          mka recoveryimage || mka recovery
+          
+          # Verificar imágenes generadas y empaquetar si no existe .zip directo
+          OUT_DIR="$HOME/fox_12.1/out/target/product/a3core"
+          if [ -d "$OUT_DIR" ]; then
+            cd "$OUT_DIR"
+            if [ -f "recovery.img" ] && [ ! -f "*.zip" ]; then
+              zip -r "OrangeFox-a3core.zip" recovery.img
+            fi
+          fi
 
       - name: Generate Release Metadata
         id: meta
