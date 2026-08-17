@@ -62,15 +62,15 @@ jobs:
         # Este manifiesto local clonará tu árbol de dispositivo y las dependencias de cada recovery.
         # Asegúrate de que las rutas y ramas de los repositorios de vendor sean correctas.
         cat <<'EOF' > workspace/.repo/local_manifests/roomservice.xml
-<?xml version="1.0" encoding="UTF-8"?>
-<manifest>
-  <remote name="gitlab" fetch="https://gitlab.com/" />
-  <project name="Aflahal-elmendezz/android_device_samsung_a3core" path="device/samsung/a3core" remote="github" revision="main" />
-  <project name="TeamWin/android_vendor_twrp" path="vendor/twrp" remote="github" revision="12.1" />
-  <project name="PitchBlackRecoveryProject/android_vendor_pb" path="vendor/pb" remote="github" revision="12.1" />
-  <project name="SHRP-Devices/android_vendor_shrp" path="vendor/shrp" remote="github" revision="shrp-12.1" />
-  <project name="OrangeFox/vendor/fox" path="vendor/fox" remote="gitlab" revision="fox_12.1" />
-</manifest>
+        <?xml version="1.0" encoding="UTF-8"?>
+        <manifest>
+          <remote name="gitlab" fetch="https://gitlab.com/" />
+          <project name="Aflahal-elmendezz/android_device_samsung_a3core" path="device/samsung/a3core" remote="github" revision="main" />
+          <project name="TeamWin/android_vendor_twrp" path="vendor/twrp" remote="github" revision="12.1" />
+          <project name="PitchBlackRecoveryProject/android_vendor_pb" path="vendor/pb" remote="github" revision="12.1" />
+          <project name="SHRP-Devices/android_vendor_shrp" path="vendor/shrp" remote="github" revision="shrp-12.1" />
+          <project name="OrangeFox/vendor/fox" path="vendor/fox" remote="gitlab" revision="fox_12.1" />
+        </manifest>
         EOF
 
     - name: Sync sources
