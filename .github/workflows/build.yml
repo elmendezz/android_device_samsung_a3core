@@ -1,10 +1,11 @@
-# Version: 2
+# Version: 3
 # ChangeLog:
 # - Se corrigió el error de paquetes obsoletos de ncurses (libncurses5/lib32ncurses5-dev) actualizando a libncurses-dev y lib32ncurses-dev / libncurses6.
 # - Se añadió el trigger por 'push' para que se ejecute automáticamente ante cualquier cambio en el repositorio.
 # - Se automatizó la creación de tags y releases dinámicas con el formato 'OrangeFox-<Version>-<Fecha,Hora,Minuto>'.
 # - Se configuró la extracción del historial de commits para usarlo automáticamente como descripción (changelog) del release.
 # - Se corrigió el fallo de 'ccache: command not found' instalando ccache mediante apt-get en el paso de preparación del entorno.
+# - Se corrigió el error 'UpdateManifestError' al hacer repo init actualizando la URL del manifest al nuevo repositorio oficial 'https://gitlab.com/OrangeFox/sync.git'.
 
 name: Build OrangeFox Recovery
 
@@ -51,7 +52,7 @@ jobs:
 
       - name: Initialize repo
         run: |
-          repo init --depth=1 -u https://gitlab.com/OrangeFox/Manifest.git -b fox_12.1
+          repo init --depth=1 -u https://gitlab.com/OrangeFox/sync.git -b master
 
       - name: Create local manifest
         run: |
