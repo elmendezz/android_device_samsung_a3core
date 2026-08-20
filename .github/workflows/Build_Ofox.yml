@@ -1,0 +1,299 @@
+name: Build OrangeFox A03 Core
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: OrangeFox 12.1 - a3core
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: read
+
+    env:
+      DEVICE: a3core
+      DEVICE_TREE: https://github.com/elmendezz/android_device_samsung_a3core.git
+      DEVICE_BRANCH: crypto-12.1
+      FOX_BRANCH: 12.1
+      BUILD_VARIANT: eng
+
+    steps:
+
+      # ============================================================
+      # 1. LIMPIEZA DEL RUNNER
+      # ============================================================
+      - name: Free disk space
+        run: |
+          set -eux
+
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/node_modules
+
+          sudo docker system prune -af || true
+
+          df -h
+
+      # ============================================================
+      # 2. DEPENDENCIAS
+      # ============================================================
+      - name: Install build dependencies
+        run: |
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            adb \
+            aria2 \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            clang \
+            curl \
+            flex \
+            g++-multilib \
+            gcc-multilib \
+            git \
+            gnupg \
+            gperf \
+            imagemagick \
+            lib32ncurses5-dev \
+            lib32readline-dev \
+            lib32z1-dev \
+            libelf-dev \
+            liblz4-tool \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libssl-dev \
+            libxml2 \
+            libxml2-utils \
+            lzop \
+            m4 \
+            make \
+            ninja-build \
+            openjdk-11-jdk \
+            pngcrush \
+            python3 \
+            python3-pip \
+            rsync \
+            schedtool \
+            squashfs-tools \
+            unzip \
+            xsltproc \
+            zip \
+            zlib1g-dev
+
+          sudo apt-get clean
+
+      # ============================================================
+      # 3. CONFIGURAR GIT
+      # ============================================================
+      - name: Configure Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      # ============================================================
+      # 4. INSTALAR REPO
+      # ============================================================
+      - name: Install repo tool
+        run: |
+          set -eux
+
+          mkdir -p "${HOME}/bin"
+
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "${HOME}/bin/repo"
+
+          chmod +x "${HOME}/bin/repo"
+
+          echo "${HOME}/bin" >> "${GITHUB_PATH}"
+
+          "${HOME}/bin/repo" --version
+
+      # ============================================================
+      # 5. SINCRONIZAR ORANGEFOX 12.1
+      # ============================================================
+      - name: Sync OrangeFox sources
+        run: |
+          set -eux
+
+          mkdir -p "${GITHUB_WORKSPACE}/orangefox"
+          cd "${GITHUB_WORKSPACE}/orangefox"
+
+          git clone --depth=1 \
+            https://gitlab.com/OrangeFox/sync.git \
+            orangefox_sync
+
+          cd orangefox_sync
+
+          chmod +x orangefox_sync.sh
+
+          ./orangefox_sync.sh \
+            --branch "${FOX_BRANCH}" \
+            --path "${GITHUB_WORKSPACE}/orangefox/source"
+
+      # ============================================================
+      # 6. COLOCAR DEVICE TREE
+      # ============================================================
+      - name: Clone A03 Core device tree
+        run: |
+          set -eux
+
+          cd "${GITHUB_WORKSPACE}/orangefox/source"
+
+          mkdir -p device/samsung
+
+          git clone \
+            --depth=1 \
+            --branch "${DEVICE_BRANCH}" \
+            "${DEVICE_TREE}" \
+            device/samsung/a3core
+
+          echo "Device tree:"
+          ls -la device/samsung/a3core
+
+          echo
+          echo "OrangeFox makefile:"
+          cat device/samsung/a3core/ofox_a3core.mk
+
+      # ============================================================
+      # 7. VERIFICAR QUE EL TARGET OFOX EXISTE
+      # ============================================================
+      - name: Verify OrangeFox target
+        run: |
+          set -eux
+
+          cd "${GITHUB_WORKSPACE}/orangefox/source"
+
+          test -f device/samsung/a3core/ofox_a3core.mk
+          test -f device/samsung/a3core/BoardConfig.mk
+          test -f device/samsung/a3core/AndroidProducts.mk
+
+          grep -q "PRODUCT_NAME := ofox_a3core" \
+            device/samsung/a3core/ofox_a3core.mk
+
+          grep -q "ofox_a3core-eng" \
+            device/samsung/a3core/AndroidProducts.mk
+
+          echo "=========================================="
+          echo " OrangeFox target encontrado"
+          echo "=========================================="
+          echo "Device : ${DEVICE}"
+          echo "Target : ofox_${DEVICE}-eng"
+          echo "Branch : ${DEVICE_BRANCH}"
+          echo "Fox    : ${FOX_BRANCH}"
+          echo "=========================================="
+
+      # ============================================================
+      # 8. CONFIGURAR BUILD
+      # ============================================================
+      - name: Configure OrangeFox build
+        run: |
+          set -eux
+
+          cd "${GITHUB_WORKSPACE}/orangefox/source"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export FOX_BUILD_DEVICE="${DEVICE}"
+          export LC_ALL=C
+
+          # El A03 Core usa recovery separado.
+          # NO es un build boot/vendor_boot.
+          export OF_FORCE_PREBUILT_KERNEL=1
+
+          # No necesitamos características específicas de MIUI.
+          export FOX_VANILLA_BUILD=1
+
+          # CCache para reducir tiempo de compilación.
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+
+          ccache -M 10G
+
+          source build/envsetup.sh
+
+          lunch ofox_a3core-eng
+
+      # ============================================================
+      # 9. COMPILAR ÚNICAMENTE RECOVERY
+      # ============================================================
+      - name: Build OrangeFox recovery
+        run: |
+          set -eux
+
+          cd "${GITHUB_WORKSPACE}/orangefox/source"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export FOX_BUILD_DEVICE="${DEVICE}"
+          export LC_ALL=C
+          export OF_FORCE_PREBUILT_KERNEL=1
+          export FOX_VANILLA_BUILD=1
+
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+
+          source build/envsetup.sh
+
+          lunch ofox_a3core-eng
+
+          echo "=========================================="
+          echo " COMPILANDO ÚNICAMENTE ORANGEFOX"
+          echo " TARGET: recoveryimage"
+          echo "=========================================="
+
+          mka adbd recoveryimage
+
+      # ============================================================
+      # 10. MOSTRAR RESULTADOS
+      # ============================================================
+      - name: Locate OrangeFox output
+        run: |
+          set -eux
+
+          cd "${GITHUB_WORKSPACE}/orangefox/source"
+
+          echo "=========================================="
+          echo " OUTPUTS"
+          echo "=========================================="
+
+          find out/target/product/a3core \
+            -maxdepth 2 \
+            -type f \
+            \( \
+              -name "*OrangeFox*" \
+              -o -name "recovery.img" \
+              -o -name "*.zip" \
+              -o -name "*.tar" \
+            \) \
+            -print \
+            -exec ls -lh {} \;
+
+      # ============================================================
+      # 11. ARTIFACTS
+      # ============================================================
+      - name: Upload OrangeFox image
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-a3core
+          path: |
+            orangefox/source/out/target/product/a3core/*OrangeFox*.img
+            orangefox/source/out/target/product/a3core/recovery.img
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload OrangeFox ZIPs
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-a3core-ZIP
+          path: |
+            orangefox/source/out/target/product/a3core/*OrangeFox*.zip
+          if-no-files-found: ignore
+          compression-level: 0
