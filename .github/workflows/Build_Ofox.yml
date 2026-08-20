@@ -1,28 +1,33 @@
-name: Build OrangeFox A03 Core
+name: Build OrangeFox A3 Core
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+env:
+  DEVICE: a3core
+  DEVICE_TREE: https://github.com/elmendezz/android_device_samsung_a3core.git
+  DEVICE_BRANCH: crypto-12.1
+  FOX_BRANCH: 12.1
+
+  # Información del compilador
+  BUILDER_NAME: "Mendez"
+  BUILD_LANGUAGE: "en"
+
 jobs:
   build:
     name: OrangeFox 12.1 - a3core
+
     runs-on: ubuntu-22.04
-
-    permissions:
-      contents: read
-
-    env:
-      DEVICE: a3core
-      DEVICE_TREE: https://github.com/elmendezz/android_device_samsung_a3core.git
-      DEVICE_BRANCH: crypto-12.1
-      FOX_BRANCH: 12.1
-      BUILD_VARIANT: eng
 
     steps:
 
       # ============================================================
-      # 1. LIMPIEZA DEL RUNNER
+      # 1. LIMPIAR EL RUNNER
       # ============================================================
+
       - name: Free disk space
         run: |
           set -eux
@@ -38,10 +43,12 @@ jobs:
 
           df -h
 
+
       # ============================================================
       # 2. DEPENDENCIAS
       # ============================================================
-      - name: Install build dependencies
+
+      - name: Install dependencies
         run: |
           set -eux
 
@@ -91,151 +98,240 @@ jobs:
 
           sudo apt-get clean
 
-      # ============================================================
-      # 3. CONFIGURAR GIT
-      # ============================================================
-      - name: Configure Git
-        run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
 
       # ============================================================
-      # 4. INSTALAR REPO
+      # 3. GIT
       # ============================================================
-      - name: Install repo tool
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "Mendez"
+          git config --global user.email "actions@github.com"
+
+
+      # ============================================================
+      # 4. REPO
+      # ============================================================
+
+      - name: Install repo
         run: |
           set -eux
 
-          mkdir -p "${HOME}/bin"
+          mkdir -p "$HOME/bin"
 
           curl -fsSL \
             https://storage.googleapis.com/git-repo-downloads/repo \
-            -o "${HOME}/bin/repo"
+            -o "$HOME/bin/repo"
 
-          chmod +x "${HOME}/bin/repo"
+          chmod +x "$HOME/bin/repo"
 
-          echo "${HOME}/bin" >> "${GITHUB_PATH}"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
 
-          "${HOME}/bin/repo" --version
+          "$HOME/bin/repo" --version
+
 
       # ============================================================
-      # 5. SINCRONIZAR ORANGEFOX 12.1
+      # 5. PREPARAR DIRECTORIO
       # ============================================================
-      - name: Sync OrangeFox sources
+
+      - name: Prepare OrangeFox source
         run: |
           set -eux
 
-          mkdir -p "${GITHUB_WORKSPACE}/orangefox"
-          cd "${GITHUB_WORKSPACE}/orangefox"
+          mkdir -p "$GITHUB_WORKSPACE/orangefox"
 
-          git clone --depth=1 \
+
+      # ============================================================
+      # 6. SINCRONIZAR ORANGEFOX 12.1
+      # ============================================================
+
+      - name: Sync OrangeFox 12.1
+        run: |
+          set -eux
+
+          cd "$GITHUB_WORKSPACE/orangefox"
+
+          git clone \
+            --depth=1 \
             https://gitlab.com/OrangeFox/sync.git \
-            orangefox_sync
+            sync
 
-          cd orangefox_sync
+          cd sync
 
           chmod +x orangefox_sync.sh
 
           ./orangefox_sync.sh \
-            --branch "${FOX_BRANCH}" \
-            --path "${GITHUB_WORKSPACE}/orangefox/source"
+            --branch "$FOX_BRANCH" \
+            --path "$GITHUB_WORKSPACE/orangefox/source"
+
 
       # ============================================================
-      # 6. COLOCAR DEVICE TREE
+      # 7. CLONAR DEVICE TREE
       # ============================================================
-      - name: Clone A03 Core device tree
+
+      - name: Clone A3 Core device tree
         run: |
           set -eux
 
-          cd "${GITHUB_WORKSPACE}/orangefox/source"
+          cd "$GITHUB_WORKSPACE/orangefox/source"
 
           mkdir -p device/samsung
 
           git clone \
             --depth=1 \
-            --branch "${DEVICE_BRANCH}" \
-            "${DEVICE_TREE}" \
+            --branch "$DEVICE_BRANCH" \
+            "$DEVICE_TREE" \
             device/samsung/a3core
 
+          cd device/samsung/a3core
+
           echo "Device tree:"
-          ls -la device/samsung/a3core
+          git log -1 --oneline
+
+          echo
+          echo "Branch:"
+          git branch --show-current
 
           echo
           echo "OrangeFox makefile:"
-          cat device/samsung/a3core/ofox_a3core.mk
+          cat ofox_a3core.mk
+
 
       # ============================================================
-      # 7. VERIFICAR QUE EL TARGET OFOX EXISTE
+      # 8. OBTENER COMMIT DEL DEVICE TREE
       # ============================================================
+
+      - name: Get device tree commit
+        id: device_commit
+        run: |
+          set -eux
+
+          cd "$GITHUB_WORKSPACE/orangefox/source/device/samsung/a3core"
+
+          COMMIT=$(git rev-parse HEAD)
+          SHORT_COMMIT=$(git rev-parse --short HEAD)
+
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "short=$SHORT_COMMIT" >> "$GITHUB_OUTPUT"
+
+          echo "Device tree commit: $COMMIT"
+
+
+      # ============================================================
+      # 9. CREAR IDENTIFICADOR DE BUILD
+      # ============================================================
+
+      - name: Generate build ID
+        id: build_id
+        run: |
+          set -eux
+
+          BUILD_DATE=$(date -u +"%Y%m%d")
+          BUILD_TIME=$(date -u +"%H%M")
+
+          BUILD_ID="OrangeFox-Build-${BUILD_DATE}-${BUILD_TIME}"
+
+          echo "id=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "date=$BUILD_DATE" >> "$GITHUB_OUTPUT"
+          echo "time=$BUILD_TIME" >> "$GITHUB_OUTPUT"
+
+          echo "=========================================="
+          echo " BUILD ID"
+          echo "=========================================="
+          echo "$BUILD_ID"
+
+
+      # ============================================================
+      # 10. VERIFICAR TARGET
+      # ============================================================
+
       - name: Verify OrangeFox target
         run: |
           set -eux
 
-          cd "${GITHUB_WORKSPACE}/orangefox/source"
+          cd "$GITHUB_WORKSPACE/orangefox/source"
 
           test -f device/samsung/a3core/ofox_a3core.mk
           test -f device/samsung/a3core/BoardConfig.mk
           test -f device/samsung/a3core/AndroidProducts.mk
 
-          grep -q "PRODUCT_NAME := ofox_a3core" \
+          grep -q \
+            "PRODUCT_NAME := ofox_a3core" \
             device/samsung/a3core/ofox_a3core.mk
 
-          grep -q "ofox_a3core-eng" \
-            device/samsung/a3core/AndroidProducts.mk
+          echo "=========================================="
+          echo " OrangeFox target OK"
+          echo "=========================================="
+          echo "Device: a3core"
+          echo "Target: ofox_a3core-eng"
+          echo "Branch: $FOX_BRANCH"
 
-          echo "=========================================="
-          echo " OrangeFox target encontrado"
-          echo "=========================================="
-          echo "Device : ${DEVICE}"
-          echo "Target : ofox_${DEVICE}-eng"
-          echo "Branch : ${DEVICE_BRANCH}"
-          echo "Fox    : ${FOX_BRANCH}"
-          echo "=========================================="
 
       # ============================================================
-      # 8. CONFIGURAR BUILD
+      # 11. CONFIGURAR CCACHE
       # ============================================================
-      - name: Configure OrangeFox build
+
+      - name: Configure ccache
         run: |
           set -eux
 
-          cd "${GITHUB_WORKSPACE}/orangefox/source"
-
-          export ALLOW_MISSING_DEPENDENCIES=true
-          export FOX_BUILD_DEVICE="${DEVICE}"
-          export LC_ALL=C
-
-          # El A03 Core usa recovery separado.
-          # NO es un build boot/vendor_boot.
-          export OF_FORCE_PREBUILT_KERNEL=1
-
-          # No necesitamos características específicas de MIUI.
-          export FOX_VANILLA_BUILD=1
-
-          # CCache para reducir tiempo de compilación.
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
 
           ccache -M 10G
 
+          ccache -z
+
+
+      # ============================================================
+      # 12. CONFIGURAR ORANGEFOX
+      # ============================================================
+
+      - name: Configure OrangeFox
+        run: |
+          set -eux
+
+          cd "$GITHUB_WORKSPACE/orangefox/source"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export FOX_BUILD_DEVICE="$DEVICE"
+          export LC_ALL=C
+
+          # A03 Core utiliza kernel precompilado.
+          export OF_FORCE_PREBUILT_KERNEL=1
+
+          # No necesitamos funciones específicas de MIUI.
+          export FOX_VANILLA_BUILD=1
+
+          # Idioma predeterminado:
+          # OrangeFox/TWRP usa inglés como idioma base.
+          export TW_DEFAULT_LANGUAGE=en
+
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+
           source build/envsetup.sh
 
           lunch ofox_a3core-eng
 
+
       # ============================================================
-      # 9. COMPILAR ÚNICAMENTE RECOVERY
+      # 13. COMPILAR SOLAMENTE RECOVERY
       # ============================================================
-      - name: Build OrangeFox recovery
+
+      - name: Build OrangeFox
         run: |
           set -eux
 
-          cd "${GITHUB_WORKSPACE}/orangefox/source"
+          cd "$GITHUB_WORKSPACE/orangefox/source"
 
           export ALLOW_MISSING_DEPENDENCIES=true
-          export FOX_BUILD_DEVICE="${DEVICE}"
+          export FOX_BUILD_DEVICE="$DEVICE"
           export LC_ALL=C
+
           export OF_FORCE_PREBUILT_KERNEL=1
           export FOX_VANILLA_BUILD=1
+          export TW_DEFAULT_LANGUAGE=en
 
           export USE_CCACHE=1
           export CCACHE_EXEC=/usr/bin/ccache
@@ -245,55 +341,250 @@ jobs:
           lunch ofox_a3core-eng
 
           echo "=========================================="
-          echo " COMPILANDO ÚNICAMENTE ORANGEFOX"
-          echo " TARGET: recoveryimage"
+          echo " BUILDING ORANGEFOX ONLY"
+          echo "=========================================="
+          echo "Device : $DEVICE"
+          echo "Target : ofox_a3core-eng"
           echo "=========================================="
 
           mka adbd recoveryimage
 
+
       # ============================================================
-      # 10. MOSTRAR RESULTADOS
+      # 14. BUSCAR IMG Y ZIP
       # ============================================================
-      - name: Locate OrangeFox output
+
+      - name: Find OrangeFox outputs
+        id: outputs
         run: |
           set -eux
 
-          cd "${GITHUB_WORKSPACE}/orangefox/source"
+          OUT="$GITHUB_WORKSPACE/orangefox/source/out/target/product/$DEVICE"
 
           echo "=========================================="
-          echo " OUTPUTS"
+          echo " BUILD OUTPUT"
           echo "=========================================="
 
-          find out/target/product/a3core \
-            -maxdepth 2 \
+          ls -lah "$OUT"
+
+          echo
+          echo "OrangeFox files:"
+
+          find "$OUT" \
+            -maxdepth 1 \
             -type f \
             \( \
-              -name "*OrangeFox*" \
-              -o -name "recovery.img" \
-              -o -name "*.zip" \
-              -o -name "*.tar" \
+              -iname "*OrangeFox*.img" \
+              -o -iname "*OrangeFox*.zip" \
             \) \
-            -print \
-            -exec ls -lh {} \;
+            -print
+
 
       # ============================================================
-      # 11. ARTIFACTS
+      # 15. PREPARAR RELEASE
       # ============================================================
-      - name: Upload OrangeFox image
+
+      - name: Prepare release files
+        id: release_files
+        run: |
+          set -eux
+
+          OUT="$GITHUB_WORKSPACE/orangefox/source/out/target/product/$DEVICE"
+          RELEASE="$GITHUB_WORKSPACE/release"
+
+          mkdir -p "$RELEASE"
+
+          BUILD_ID="${{ steps.build_id.outputs.id }}"
+
+          # --------------------------------------------------------
+          # Buscar IMG
+          # --------------------------------------------------------
+
+          IMG=$(find "$OUT" \
+            -maxdepth 1 \
+            -type f \
+            -iname "*OrangeFox*.img" \
+            | head -n 1)
+
+          if [ -z "$IMG" ]; then
+            echo "ERROR: OrangeFox IMG not found."
+            exit 1
+          fi
+
+          # --------------------------------------------------------
+          # Buscar ZIP generado por OrangeFox
+          # --------------------------------------------------------
+
+          ZIP=$(find "$OUT" \
+            -maxdepth 1 \
+            -type f \
+            -iname "*OrangeFox*.zip" \
+            | head -n 1)
+
+          if [ -z "$ZIP" ]; then
+            echo "ERROR: OrangeFox ZIP not found."
+            echo
+            echo "Archivos encontrados:"
+            find "$OUT" -maxdepth 1 -type f -print
+            exit 1
+          fi
+
+          # --------------------------------------------------------
+          # Nombres finales
+          # --------------------------------------------------------
+
+          IMG_NAME="${BUILD_ID}-a3core.img"
+          ZIP_NAME="${BUILD_ID}-a3core.zip"
+
+          cp "$IMG" "$RELEASE/$IMG_NAME"
+          cp "$ZIP" "$RELEASE/$ZIP_NAME"
+
+          # --------------------------------------------------------
+          # Información del build
+          # --------------------------------------------------------
+
+          cat > "$RELEASE/build-info.txt" <<EOF
+OrangeFox Recovery Build
+========================
+
+Device:
+Samsung Galaxy A03 Core / a3core
+
+OrangeFox branch:
+fox_${FOX_BRANCH}
+
+Build:
+${BUILD_ID}
+
+Builder:
+${BUILDER_NAME}
+
+Default language:
+English
+
+Device tree:
+${DEVICE_TREE}
+
+Device tree branch:
+${DEVICE_BRANCH}
+
+Device tree commit:
+${{ steps.device_commit.outputs.commit }}
+
+GitHub workflow:
+${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+Build date:
+$(date -u +"%Y-%m-%d %H:%M UTC")
+
+Files:
+- ${IMG_NAME}
+- ${ZIP_NAME}
+
+IMPORTANT:
+This is an unofficial personal OrangeFox build.
+Test the recovery before daily use.
+EOF
+
+          echo
+          echo "=========================================="
+          echo " RELEASE FILES"
+          echo "=========================================="
+
+          ls -lh "$RELEASE"
+
+
+      # ============================================================
+      # 16. GENERAR SHA256
+      # ============================================================
+
+      - name: Generate SHA256
+        run: |
+          set -eux
+
+          cd "$GITHUB_WORKSPACE/release"
+
+          sha256sum \
+            *.img \
+            *.zip \
+            > SHA256SUMS.txt
+
+          cat SHA256SUMS.txt
+
+
+      # ============================================================
+      # 17. CREAR GITHUB RELEASE
+      # ============================================================
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.build_id.outputs.id }}
+          name: ${{ steps.build_id.outputs.id }}
+
+          prerelease: true
+          draft: false
+
+          generate_release_notes: false
+
+          body: |
+            # OrangeFox Recovery — A3 Core
+
+            **Build:** `${{ steps.build_id.outputs.id }}`
+
+            **Device:** Samsung Galaxy A03 Core (`a3core`)
+
+            **OrangeFox:** `fox_12.1`
+
+            **Builder:** Mendez
+
+            **Default language:** English 🇺🇸
+
+            ## Device tree
+
+            Repository:
+            https://github.com/elmendezz/android_device_samsung_a3core
+
+            Branch:
+            `crypto-12.1`
+
+            Commit:
+            `${{ steps.device_commit.outputs.commit }}`
+
+            ## Included files
+
+            - OrangeFox `.img`
+            - OrangeFox flashable `.zip`
+            - SHA256 checksums
+            - Build information
+
+            ## ⚠️ Important
+
+            This is an **unofficial personal build** compiled by **Mendez**.
+
+            Test the exact build before using it as a daily recovery.
+
+            The OrangeFox ZIP is intended to be flashed from a compatible recovery, not with fastboot. The `.img` should only be flashed to the correct recovery partition according to the device's partition layout.
+
+          files: |
+            release/*.img
+            release/*.zip
+            release/SHA256SUMS.txt
+            release/build-info.txt
+
+
+      # ============================================================
+      # 18. TAMBIÉN ARTIFACT
+      # ============================================================
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: OrangeFox-a3core
+          name: ${{ steps.build_id.outputs.id }}
           path: |
-            orangefox/source/out/target/product/a3core/*OrangeFox*.img
-            orangefox/source/out/target/product/a3core/recovery.img
+            release/*.img
+            release/*.zip
+            release/SHA256SUMS.txt
+            release/build-info.txt
           if-no-files-found: error
-          compression-level: 0
-
-      - name: Upload OrangeFox ZIPs
-        uses: actions/upload-artifact@v4
-        with:
-          name: OrangeFox-a3core-ZIP
-          path: |
-            orangefox/source/out/target/product/a3core/*OrangeFox*.zip
-          if-no-files-found: ignore
           compression-level: 0
